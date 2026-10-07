@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { posAt, heightAt, SPACING } from './track.js';
-import { MAX_SPEED, driftTier } from './truck.js';
+import { MAX_SPEED, driftTier, RESCUE_TIME, RESCUE_SWAP } from './truck.js';
+import { buildFences } from './fencemesh.js';
 import { groundHeight, groundSlope, roadDistance } from './terrain.js';
 import { buildScenery, SUN_DIR, FOG_COLOR } from './scenery.js';
 import { PAD_LENGTH, PAD_HALF_WIDTH } from './pads.js';
@@ -286,7 +287,7 @@ export class Renderer {
     this.renderer.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
     this.countdown = new Countdown3D();
-    this.fx = new Fx(this.scene);
+    this.fx = new Fx(this.scene, PLAYER_COLORS);
     this.renderer.info.autoReset = false;
     this.scene.background = skyTexture();
     this.scene.fog = new THREE.Fog(FOG_COLOR, 420, 4300); // dis gjør fjellene i horisonten blålige
@@ -349,26 +350,8 @@ export class Renderer {
     // Hvite kantlinjer innenfor kantsteinen.
     for (const side of [-1, 1]) scene.add(strip(track, side * (hw - 0.45), side * (hw - 0.15), 0.085, () => 0xf0f0f0));
 
-    // Barrierer (røde og hvite blokker) langs begge sider.
-    const blockGeo = new THREE.BoxGeometry(SPACING * 1.6, 1.4, 0.9);
-    const blocks = new THREE.InstancedMesh(blockGeo, new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.05 }), Math.floor(track.count / 2) * 2);
-    blocks.castShadow = true;
-    blocks.receiveShadow = true;
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-    let n = 0;
-    for (let i = 0; i < track.count; i += 2) {
-      for (const side of [-1, 1]) {
-        const p = track.pts[i];
-        const lat = side * (track.wallLat + 0.6);
-        q.setFromAxisAngle(up, -Math.atan2(p.tz, p.tx));
-        const bx = p.x + p.nx * lat, bz = p.z + p.nz * lat;
-        m4.compose(new THREE.Vector3(bx, groundHeight(bx, bz) + 0.7, bz), q, new THREE.Vector3(1, 1, 1));
-        blocks.setMatrixAt(n, m4);
-        blocks.setColorAt(n, new THREE.Color((i / 2) % 2 ? 0xe8412c : 0xf4f4f4));
-        n++;
-      }
-    }
-    scene.add(blocks);
+    // Autovern, skigard og kantstolper (ingen sammenhengende barriere: man kan kjøre ut i terrenget).
+    scene.add(buildFences(track));
 
     // Start/mål: rutete strek og portal.
     const checker = canvasTexture(128, (g, s) => {
@@ -720,6 +703,19 @@ export class Renderer {
       const m = this.trucks[i];
       m.root.position.set(t.x, t.y, t.z);
       m.root.rotation.y = -t.theta;
+      // Redning: trucken løftes og krymper bort, og dukker opp igjen blinkende på veien.
+      const r = t.rescue || 0;
+      const blasted = t.rescueWhy === 'rocket';
+      if (r > RESCUE_SWAP && !blasted) {
+        const f = (r - RESCUE_SWAP) / (RESCUE_TIME - RESCUE_SWAP);
+        m.root.scale.setScalar(Math.max(0.01, f * f));
+        m.root.position.y += (1 - f) * 4;
+      } else m.root.scale.setScalar(r > 0 && r <= RESCUE_SWAP ? Math.min(1, 1.15 - r / RESCUE_SWAP * 0.6) : 1);
+      m.root.visible = r <= 0 || (r > RESCUE_SWAP ? !blasted : Math.floor(time * 14) % 2 === 0);
+      // Flyttes trucken langt på et blunk (redning, teleport), hopper kameraet med i stedet for å fly etter.
+      const moved = m.lastX !== undefined && Math.hypot(t.x - m.lastX, t.z - m.lastZ) > 25;
+      m.lastX = t.x;
+      m.lastZ = t.z;
       const bounce = Math.sin(time * 40 + i) * 0.04 * Math.min(1, t.speed / 20) * (t.onRoad ? 0.4 : 2.5);
       m.chassis.position.y = bounce;
       // Hellingen under trucken (terreng og ramper); i lufta peker nesa etter vertikalfarten.
@@ -733,8 +729,8 @@ export class Renderer {
         rollGoal = -Math.atan(slope.side);
       }
       const k = Math.min(1, 12 * dt);
-      m.pitch = snap || m.pitch === undefined ? pitchGoal : m.pitch + (pitchGoal - m.pitch) * k;
-      m.tilt = snap || m.tilt === undefined ? rollGoal : m.tilt + (rollGoal - m.tilt) * k;
+      m.pitch = snap || moved || m.pitch === undefined ? pitchGoal : m.pitch + (pitchGoal - m.pitch) * k;
+      m.tilt = snap || moved || m.tilt === undefined ? rollGoal : m.tilt + (rollGoal - m.tilt) * k;
       m.chassis.rotation.x = t.roll + m.tilt;
       m.chassis.rotation.z = m.pitch;
       m.flames.visible = t.turbo > 0;
@@ -744,7 +740,7 @@ export class Renderer {
       m.bubble.material.opacity = 0.34 + Math.sin(time * 6) * 0.1;
       m.bubble.scale.setScalar(1 + Math.sin(time * 6) * 0.03);
       m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
-      this.updateCamera(i, t, dt, snap);
+      this.updateCamera(i, t, dt, snap || moved);
       this.fx.applyCamera(this.cameras[i], i, time);
     });
     this.fx.update(game, dt);

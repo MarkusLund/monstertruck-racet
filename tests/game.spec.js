@@ -249,24 +249,103 @@ test.describe('Spillmekanikk', () => {
     expect(s.trucks[0].speed).toBeGreaterThan(s.trucks[1].speed + 5);
   });
 
-  test('barrieren holder trucken på banen og man setter seg ikke fast', async ({ page }) => {
+  test('man kan kjøre ut i terrenget, men blir hentet tilbake til veien etter en stund', async ({ page }) => {
     await open(page);
     await startRace(page);
-    const wallLat = await page.evaluate(() => window.__game.game.track.wallLat);
-    await teleport(page, 0, 60, 0);
-    // Rett frem er banen rett her; sving hardt til høyre og gi gass inn i barrieren.
+    // Et sted litt ute i terrenget som verken er bratt eller under vann.
+    const spot = await page.evaluate(async () => {
+      const T = await import('/src/terrain.js');
+      const { track } = window.__game.game;
+      const lat = track.wallLat + 8;
+      let best = null;
+      for (let i = 60; i < track.count - 30; i += 3) {
+        const p = track.pts[i];
+        for (const sg of [-1, 1]) {
+          const x = p.x + p.nx * sg * lat, z = p.z + p.nz * sg * lat;
+          const sl = T.groundSlope(x, z, 0);
+          const steep = Math.hypot(sl.forward, sl.side);
+          if (T.groundHeight(x, z) > T.terrainLevels().water + 5 && (!best || steep < best.steep)) best = { steep, s: p.s, lat: sg * lat, half: track.halfWidth, wall: track.wallLat };
+        }
+      }
+      return best;
+    });
+    expect(spot).not.toBeNull();
+    const { half, wall } = spot;
+    await teleport(page, 0, spot.s, spot.lat);
+    await advance(page, 1);
+    let s = await state(page);
+    expect(Math.abs(s.trucks[0].lat)).toBeGreaterThan(wall);
+    expect(s.trucks[0].offTime).toBeGreaterThan(0.5);
+    expect(s.trucks[0].msg).toMatch(/Utenfor veien/);
+    await advance(page, 2.2);
+    s = await state(page);
+    expect(s.trucks[0].rescue).toBeGreaterThan(0);
+    await advance(page, 1.4);
+    s = await state(page);
+    expect(s.trucks[0].rescue).toBe(0);
+    expect(Math.abs(s.trucks[0].lat)).toBeLessThanOrEqual(half);
+    expect(Math.abs(s.trucks[0].dist - spot.s)).toBeLessThan(10); // ingen gevinst av å kjøre ut
+    // Etter redningen kan man kjøre videre.
+    const d0 = s.trucks[0].dist;
     await page.keyboard.down('w');
-    await page.keyboard.down('d');
+    await advance(page, 3);
+    expect((await state(page)).trucks[0].dist).toBeGreaterThan(d0 + 20);
+    await page.keyboard.up('w');
+  });
+
+  test('havner man i fjorden blir man hentet med en gang', async ({ page }) => {
+    await open(page);
+    await startRace(page);
+    const spot = await page.evaluate(async () => {
+      const T = await import('/src/terrain.js');
+      const { track } = window.__game.game;
+      const water = T.terrainLevels().water;
+      for (let i = 30; i < track.count - 30; i += 5) {
+        for (const sg of [-1, 1]) for (let lat = 25; lat < 140; lat += 3) {
+          const p = track.pts[i];
+          if (T.groundHeight(p.x + p.nx * sg * lat, p.z + p.nz * sg * lat) < water - 1) return { s: p.s, lat: sg * lat };
+        }
+      }
+      return null;
+    });
+    expect(spot).not.toBeNull();
+    await teleport(page, 0, spot.s, spot.lat);
+    await advance(page, 0.1);
+    let s = await state(page);
+    expect(s.trucks[0].rescue).toBeGreaterThan(0);
+    expect(s.trucks[0].msg).toMatch(/Plask/);
+    await advance(page, 1.5);
+    s = await state(page);
+    expect(Math.abs(s.trucks[0].lat)).toBeLessThanOrEqual(11);
+    expect(s.trucks[0].rescue).toBe(0);
+  });
+
+  test('gjerdene holder trucken inne, og man setter seg ikke fast', async ({ page }) => {
+    await open(page);
+    await startRace(page);
+    const spot = await page.evaluate(async () => {
+      const F = await import('/src/fences.js');
+      const { track } = window.__game.game;
+      const run = track.fences.runs.find((r) => r.len > 40 && r.i0 > 30 && r.i0 + r.len < track.count - 10);
+      return run && { s: (run.i0 + 10) * 2, side: run.side ? 1 : -1, fence: F.FENCE_LAT };
+    });
+    expect(spot).toBeTruthy();
+    await teleport(page, 0, spot.s, spot.side * 8);
+    // Pek trucken skrått ut mot gjerdet og gi gass.
+    await page.evaluate((sd) => { const t = window.__game.game.trucks[0]; t.theta += sd * 0.6; }, spot.side);
+    await page.keyboard.down('w');
     let maxLat = 0;
-    for (let i = 0; i < 10; i++) {
-      await advance(page, 0.5);
+    for (let i = 0; i < 8; i++) {
+      await advance(page, 0.25);
       maxLat = Math.max(maxLat, Math.abs((await state(page)).trucks[0].lat));
     }
-    await page.keyboard.up('d');
-    expect(maxLat).toBeLessThanOrEqual(wallLat + 0.01);
-    // Slipper man sving, skal trucken rette seg langs banen og komme seg videre.
-    const d0 = (await state(page)).trucks[0].dist;
-    await advance(page, 6);
+    expect(maxLat).toBeLessThanOrEqual(spot.fence + 0.01);
+    expect(maxLat).toBeGreaterThan(spot.fence - 0.5); // traff faktisk gjerdet
+    const s = await state(page);
+    expect(s.trucks[0].rescue).toBe(0);
+    // Trucken retter seg langs banen og kommer seg videre.
+    const d0 = s.trucks[0].dist;
+    await advance(page, 4);
     expect((await state(page)).trucks[0].dist).toBeGreaterThan(d0 + 20);
     await page.keyboard.up('w');
   });

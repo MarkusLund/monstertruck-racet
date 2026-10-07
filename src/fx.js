@@ -6,8 +6,11 @@ import { groundHeight, clearance } from './terrain.js';
 // Alt her er ren visning og leser bare spilltilstanden, så den autoritative fysikken (verten) berøres ikke.
 // Alle partikler ligger i én forhåndsallokert pool (én Points-tegning), og meshene til glimt gjenbrukes.
 
-const MAX_PARTICLES = 900;
+const MAX_PARTICLES = 1400;
 const FLASHES = 4;
+const DEBRIS = 48; // vrakdeler i poolen (én InstancedMesh, ingen allokering ved eksplosjon)
+const PIECES = 12; // vrakdeler per sprengt truck
+const RINGS = 3; // trykkbølger på bakken
 const SLOW_SCALE = 0.3; // visuell tidsskala under sakte-film
 const SLOW_TIME = 0.5; // sekunder (virkelig tid) med sakte-film etter rakettreff
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -17,29 +20,37 @@ const VERT = `
 attribute float size;
 attribute float alpha;
 attribute vec3 pcolor;
+attribute float padd;
 varying float vAlpha;
 varying vec3 vColor;
+varying float vAdd;
 void main() {
   vAlpha = alpha;
   vColor = pcolor;
+  vAdd = padd;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_PointSize = size * 380.0 / max(0.5, -mv.z);
   gl_Position = projectionMatrix * mv;
 }`;
+// Premultiplisert blanding (ONE, ONE_MINUS_SRC_ALPHA): vAdd = 0 gir vanlig gjennomsiktighet (røyk, støv),
+// vAdd = 1 gir additivt lys (ild, gnister). Begge deler i samme tegning.
 const FRAG = `
 varying float vAlpha;
 varying vec3 vColor;
+varying float vAdd;
 void main() {
   float d = length(gl_PointCoord - 0.5) * 2.0;
   if (d > 1.0 || vAlpha <= 0.01) discard;
-  gl_FragColor = vec4(vColor, vAlpha * (1.0 - d * d * 0.6));
+  float a = vAlpha * (1.0 - d * d * 0.6);
+  gl_FragColor = vec4(vColor * a, a * (1.0 - vAdd));
 }`;
 
 const SPARK = [1, 0.85, 0.4];
 const SHIELD_SPARK = [0.5, 0.85, 1];
 
 export class Fx {
-  constructor(scene) {
+  constructor(scene, colors = []) {
+    this.colors = colors;
     const n = MAX_PARTICLES;
     // Partikkeltilstand i typede arrayer (ingen allokering per partikkel).
     this.p = {
@@ -47,7 +58,7 @@ export class Fx {
       life: new Float32Array(n), maxLife: new Float32Array(n),
       size: new Float32Array(n), grow: new Float32Array(n),
       grav: new Float32Array(n), drag: new Float32Array(n), a0: new Float32Array(n),
-      col: new Float32Array(n * 3),
+      col: new Float32Array(n * 3), add: new Float32Array(n),
       outSize: new Float32Array(n), outAlpha: new Float32Array(n),
     };
     this.next = 0;
@@ -57,20 +68,51 @@ export class Fx {
     geo.setAttribute('pcolor', new THREE.BufferAttribute(this.p.col, 3));
     geo.setAttribute('size', new THREE.BufferAttribute(this.p.outSize, 1));
     geo.setAttribute('alpha', new THREE.BufferAttribute(this.p.outAlpha, 1));
+    geo.setAttribute('padd', new THREE.BufferAttribute(this.p.add, 1));
     this.points = new THREE.Points(geo, new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     }));
     this.points.frustumCulled = false;
     scene.add(this.points);
 
     const flashGeo = new THREE.SphereGeometry(1, 12, 8);
     this.flashes = Array.from({ length: FLASHES }, () => {
-      const mesh = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({ color: 0xffc860, transparent: true, depthWrite: false }));
+      const mesh = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({ color: 0xffc860, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
       mesh.visible = false;
       scene.add(mesh);
       return { mesh, age: 1, scale: 1 };
     });
     this.nextFlash = 0;
+
+    // Trykkbølge: en flat ring som vokser og blekner. Står synlig (gjennomsiktig) første bilde så shaderen kompileres med en gang.
+    const ringGeo = new THREE.RingGeometry(0.75, 1, 40);
+    ringGeo.rotateX(-Math.PI / 2);
+    this.rings = Array.from({ length: RINGS }, () => {
+      const mesh = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffd090, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      return { mesh, age: 1, warm: false };
+    });
+    this.nextRing = 0;
+
+    // Vrakdeler: hjul og karosseribiter som spinner gjennom lufta, spretter på bakken og trekker røyk etter seg.
+    // count holdes på antall aktive, men meshen er alltid synlig så shaderen kompileres ved oppstart (ikke midt i løpet).
+    this.debris = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.2 }), DEBRIS);
+    this.debris.frustumCulled = false;
+    this.debris.count = 0;
+    this.debris.setColorAt(0, new THREE.Color(1, 1, 1));
+    scene.add(this.debris);
+    this.bits = Array.from({ length: DEBRIS }, () => ({
+      life: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, wx: 0, wy: 0, wz: 0, sx: 1, sy: 1, sz: 1, smoke: 0,
+    }));
+    this.nextBit = 0;
+    this._m4 = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._e = new THREE.Euler();
+    this._v = new THREE.Vector3();
+    this._s = new THREE.Vector3();
+    this._c = new THREE.Color();
 
     this.trauma = [0, 0, 0, 0]; // 0..1 per spillerskjerm
     this.kick = [0, 0, 0, 0]; // zoom-støt (synkende FOV) per spillerskjerm
@@ -87,7 +129,7 @@ export class Fx {
     this.trauma[i] = Math.min(1, this.trauma[i] + amount);
   }
 
-  spawn(x, y, z, vx, vy, vz, life, size, grow, rgb, alpha, grav, drag) {
+  spawn(x, y, z, vx, vy, vz, life, size, grow, rgb, alpha, grav, drag, add = 0) {
     const p = this.p, i = this.next;
     this.next = (i + 1) % MAX_PARTICLES;
     p.pos[i * 3] = x; p.pos[i * 3 + 1] = y; p.pos[i * 3 + 2] = z;
@@ -95,6 +137,7 @@ export class Fx {
     p.life[i] = p.maxLife[i] = life;
     p.size[i] = size; p.grow[i] = grow; p.a0[i] = alpha; p.grav[i] = grav; p.drag[i] = drag;
     p.col[i * 3] = rgb[0]; p.col[i * 3 + 1] = rgb[1]; p.col[i * 3 + 2] = rgb[2];
+    p.add[i] = add;
   }
 
   // Gnister: gule (blå for skjold) som skyter utover og faller ned.
@@ -102,7 +145,7 @@ export class Fx {
     for (let k = 0; k < count; k++) {
       const a = Math.random() * Math.PI * 2, up = rnd(0.2, 1);
       const s = rnd(0.4, 1) * speed;
-      this.spawn(x, y, z, Math.cos(a) * s, up * s * 0.8, Math.sin(a) * s, rnd(0.25, 0.6), 0.35, 0, rgb, 1, -26, 0.4);
+      this.spawn(x, y, z, Math.cos(a) * s, up * s * 0.8, Math.sin(a) * s, rnd(0.25, 0.6), 0.35, 0, rgb, 1, -26, 0.4, 1);
     }
   }
 
@@ -123,13 +166,108 @@ export class Fx {
     const fire = [[1, 0.75, 0.2], [1, 0.45, 0.1], [0.9, 0.25, 0.08]];
     for (let k = 0; k < Math.round(30 * scale); k++) {
       const a = Math.random() * Math.PI * 2, s = rnd(4, 15) * scale, up = rnd(0.1, 0.9);
-      this.spawn(x, y, z, Math.cos(a) * s, up * s * 0.8, Math.sin(a) * s, rnd(0.4, 0.9), rnd(1.6, 2.8) * scale, 5, fire[k % 3], 0.9, 1, 3);
+      this.spawn(x, y, z, Math.cos(a) * s, up * s * 0.8, Math.sin(a) * s, rnd(0.4, 0.9), rnd(1.6, 2.8) * scale, 5, fire[k % 3], 0.8, 1, 3, 0.35);
     }
     for (let k = 0; k < Math.round(18 * scale); k++) {
       const a = Math.random() * Math.PI * 2, s = rnd(1, 6) * scale, g = rnd(0.25, 0.4);
       this.spawn(x, y + 0.5, z, Math.cos(a) * s, rnd(3, 8), Math.sin(a) * s, rnd(1.1, 1.9), rnd(2, 3.2) * scale, 3.5, [g, g, g], 0.5, 1.5, 1.8);
     }
     this.sparks(x, y, z, Math.round(24 * scale), 20 * scale);
+  }
+
+  // En truck som sprenges: hvitglødende kjerne, ildkule og ildsøyle, trykkbølge, glør, svart røyksøyle og vrakdeler.
+  truckExplosion(x, y, z, id) {
+    this.explosion(x, y + 1.2, z, 1.5);
+    const fl = this.flashes[this.nextFlash];
+    this.nextFlash = (this.nextFlash + 1) % FLASHES;
+    fl.age = 0;
+    fl.scale = 2.4;
+    fl.mesh.position.set(x, y + 1.5, z);
+    fl.mesh.visible = true;
+    // Ildsøyle som velter opp.
+    for (let k = 0; k < 22; k++) {
+      const a = Math.random() * Math.PI * 2, r = rnd(0, 1.6);
+      this.spawn(x + Math.cos(a) * r, y + 1, z + Math.sin(a) * r, Math.cos(a) * 2, rnd(6, 13), Math.sin(a) * 2, rnd(0.5, 0.95), rnd(2, 3.2), 4, k % 2 ? [0.95, 0.4, 0.1] : [1, 0.7, 0.25], 0.85, -4, 2, 0.35);
+    }
+    // Glør som regner ned.
+    for (let k = 0; k < 30; k++) {
+      const a = Math.random() * Math.PI * 2, sp = rnd(5, 17);
+      this.spawn(x, y + 1.5, z, Math.cos(a) * sp, rnd(8, 18), Math.sin(a) * sp, rnd(0.9, 1.7), rnd(0.25, 0.45), 0, [1, rnd(0.5, 0.8), 0.2], 1, -20, 0.6, 1);
+    }
+    // Tykk, mørk røyksøyle som henger igjen.
+    for (let k = 0; k < 16; k++) {
+      const g = rnd(0.08, 0.18);
+      this.spawn(x + rnd(-1, 1), y + 1.5 + k * 0.25, z + rnd(-1, 1), rnd(-1.2, 1.2), rnd(2.5, 5), rnd(-1.2, 1.2), rnd(1.7, 2.4), rnd(2.5, 3.5), 6, [g, g, g * 1.05], 0.6, 0.6, 0.9);
+    }
+    // Trykkbølge langs bakken.
+    const ring = this.rings[this.nextRing];
+    this.nextRing = (this.nextRing + 1) % RINGS;
+    ring.age = 0;
+    ring.mesh.position.set(x, groundHeight(x, z) + 0.25, z);
+    // Vrakdeler: fire hjul (svarte) og karosseribiter i spillerens farge.
+    const body = this.colors[id]?.body ?? 0xcc3322, dark = this.colors[id]?.dark ?? 0x772211;
+    for (let k = 0; k < PIECES; k++) {
+      const b = this.bits[this.nextBit];
+      const idx = this.nextBit;
+      this.nextBit = (this.nextBit + 1) % DEBRIS;
+      const wheel = k < 4, a = (k / PIECES) * Math.PI * 2 + rnd(-0.3, 0.3), sp = rnd(6, wheel ? 11 : 15);
+      Object.assign(b, {
+        life: rnd(2, 2.8), x, y: y + 1.2, z, vx: Math.cos(a) * sp, vy: rnd(9, wheel ? 14 : 19), vz: Math.sin(a) * sp,
+        rx: rnd(0, 6), ry: rnd(0, 6), rz: rnd(0, 6), wx: rnd(-12, 12), wy: rnd(-8, 8), wz: rnd(-12, 12),
+        sx: wheel ? 1.1 : rnd(0.5, 1.6), sy: wheel ? 1.1 : rnd(0.15, 0.5), sz: wheel ? 0.6 : rnd(0.5, 1.3), smoke: k % 2 ? 1.1 : 0, acc: 0,
+      });
+      this.debris.setColorAt(idx, this._c.setHex(wheel ? 0x18181b : k % 3 ? body : dark));
+    }
+    this.debris.instanceColor.needsUpdate = true;
+  }
+
+  updateDebris(dt) {
+    const m4 = this._m4, q = this._q, e = this._e, v = this._v, s = this._s;
+    let top = 0;
+    for (let i = 0; i < DEBRIS; i++) {
+      const b = this.bits[i];
+      if (b.life <= 0) { if (i < this.debris.count) this.debris.setMatrixAt(i, m4.makeScale(0, 0, 0)); continue; }
+      b.life -= dt;
+      top = i + 1;
+      b.vy -= 28 * dt;
+      b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+      b.rx += b.wx * dt; b.ry += b.wy * dt; b.rz += b.wz * dt;
+      const floor = groundHeight(b.x, b.z) + b.sy * 0.5;
+      if (b.y < floor) {
+        b.y = floor;
+        b.vy = Math.abs(b.vy) > 3 ? -b.vy * 0.35 : 0;
+        b.vx *= 0.55; b.vz *= 0.55; b.wx *= 0.5; b.wy *= 0.5; b.wz *= 0.5;
+      }
+      // Røykspor bak noen av bitene det første sekundet.
+      if (b.smoke > 0) {
+        b.smoke -= dt;
+        b.acc += dt;
+        while (b.acc > 0.045) {
+          b.acc -= 0.045;
+          const g = rnd(0.15, 0.3);
+          this.spawn(b.x, b.y, b.z, rnd(-0.5, 0.5), rnd(0.5, 1.5), rnd(-0.5, 0.5), rnd(0.6, 1), rnd(0.6, 1), 2.2, [g, g, g], 0.55, 0.4, 1.5);
+        }
+      }
+      const shrink = Math.min(1, b.life / 0.4);
+      m4.compose(v.set(b.x, b.y, b.z), q.setFromEuler(e.set(b.rx, b.ry, b.rz)), s.set(b.sx * shrink, b.sy * shrink, b.sz * shrink));
+      this.debris.setMatrixAt(i, m4);
+    }
+    this.debris.count = top;
+    if (top) this.debris.instanceMatrix.needsUpdate = true;
+
+    for (const r of this.rings) {
+      if (r.age >= 1) {
+        if (r.warm) r.mesh.visible = false;
+        r.warm = true; // første bilde tegnes ringen usynlig (shaderen kompileres), deretter skjules den
+        continue;
+      }
+      r.mesh.visible = true;
+      r.age = Math.min(1, r.age + dt / 0.55);
+      const k = 1 - (1 - r.age) ** 3; // rask start, så bremser den
+      r.mesh.scale.setScalar(1 + k * 17);
+      r.mesh.material.opacity = (1 - r.age) * 0.6;
+      r.mesh.visible = r.age < 1;
+    }
   }
 
   // Støv/jord bak bakhjulene når trucken kjører fort på bakken.
@@ -167,7 +305,7 @@ export class Fx {
     if (e.type === 'hit') {
       this.stats.hits++;
       if (e.cause === 'rocket' && !e.shielded) {
-        this.explosion(t.x, y + 1.4, t.z, 1);
+        this.truckExplosion(t.x, y, t.z, e.truck);
         this.addTrauma(e.truck, 1);
         this.kick[e.truck] = 1;
         this.slow = SLOW_TIME;
@@ -199,6 +337,8 @@ export class Fx {
     } else if (e.type === 'land') {
       this.dustPuff(t.x, y + 0.3, t.z, 8);
       this.addTrauma(e.truck, 0.12);
+    } else if (e.type === 'rescue') {
+      this.dustPuff(t.x, y + 0.5, t.z, 14, e.why === 'water' ? [0.85, 0.92, 1] : undefined);
     }
   }
 
@@ -218,25 +358,29 @@ export class Fx {
       p.vel[k] *= drag; p.vel[k + 2] *= drag;
       p.vel[k + 1] = p.vel[k + 1] * drag + p.grav[i] * sdt;
       p.pos[k] += p.vel[k] * sdt; p.pos[k + 1] += p.vel[k + 1] * sdt; p.pos[k + 2] += p.vel[k + 2] * sdt;
-      const floor = groundHeight(p.pos[k], p.pos[k + 2]) + 0.05; // partikler legger seg på terrenget
-      if (p.pos[k + 1] < floor) { p.pos[k + 1] = floor; p.vel[k + 1] = 0; }
+      if (p.vel[k + 1] < 0) {
+        const floor = groundHeight(p.pos[k], p.pos[k + 2]) + 0.05; // partikler legger seg på terrenget
+        if (p.pos[k + 1] < floor) { p.pos[k + 1] = floor; p.vel[k + 1] = 0; }
+      }
       const f = p.life[i] / p.maxLife[i];
       p.outSize[i] = p.size[i] + p.grow[i] * (1 - f);
       p.outAlpha[i] = p.a0[i] * Math.min(1, f * 2.5);
     }
     this.live = live;
+    this.updateDebris(sdt);
     const g = this.points.geometry;
     g.attributes.position.needsUpdate = true;
     g.attributes.size.needsUpdate = true;
     g.attributes.alpha.needsUpdate = true;
     g.attributes.pcolor.needsUpdate = true;
+    g.attributes.padd.needsUpdate = true;
 
     for (const f of this.flashes) {
       if (!f.mesh.visible) continue;
       f.age += sdt / 0.35;
       if (f.age >= 1) { f.mesh.visible = false; continue; }
       f.mesh.scale.setScalar(f.scale * (0.35 + f.age * 0.9));
-      f.mesh.material.opacity = (1 - f.age) * 0.85;
+      f.mesh.material.opacity = (1 - f.age) * 0.6;
     }
     for (let i = 0; i < this.trauma.length; i++) {
       this.trauma[i] = Math.max(0, this.trauma[i] - sdt * 1.5);

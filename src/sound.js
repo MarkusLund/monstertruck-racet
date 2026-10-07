@@ -78,7 +78,10 @@ export class Sound {
       this.noise(0.12 + power * 0.18, 0.08 + power * 0.18, 2500, 200);
       this.beep(120 - power * 40, 0.14 + power * 0.1, 'square', 0.06 + power * 0.06, -50);
     } else if (type === 'land') { this.noise(0.12, 0.08, 800, 150); this.beep(90, 0.12, 'triangle', 0.09, -30); }
-    else if (type === 'lap') { this.beep(520, 0.12); setTimeout(() => this.beep(780, 0.2), 110); }
+    else if (type === 'rescue') {
+      if (e.why === 'water') this.noise(0.5, 0.18, 1800, 200);
+      this.beep(330, 0.35, 'sine', 0.07, 520);
+    } else if (type === 'lap') { this.beep(520, 0.12); setTimeout(() => this.beep(780, 0.2), 110); }
     else if (type === 'finish') { this.beep(660, 0.2); setTimeout(() => this.beep(880, 0.4), 180); }
   }
 }

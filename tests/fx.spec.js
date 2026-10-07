@@ -40,14 +40,14 @@ test.describe('Treff og effekter', () => {
     expect(hit.kick[0]).toBeGreaterThan(0.5);
     expect(hit.kick[1]).toBe(0);
     expect(hit.scale).toBeLessThan(1);
-    // Fysikken (verten) går i vanlig fart: stun er satt og telles ned i simulerte sekunder, ikke i sakte-film.
-    expect((await state(page)).trucks[0].stun).toBeGreaterThan(0);
+    // Fysikken (verten) går i vanlig fart: redningen telles ned i simulerte sekunder, ikke i sakte-film.
+    expect((await state(page)).trucks[0].rescue).toBeGreaterThan(0);
     await run(page, 3);
     const after = await fxState(page);
     expect(after.trauma[0]).toBe(0);
     expect(after.scale).toBe(1);
     expect(after.live).toBe(0);
-    expect((await state(page)).trucks[0].stun).toBe(0);
+    expect((await state(page)).trucks[0].rescue).toBe(0);
   });
 
   test('kollisjon: gnister og rist skalert med støtstyrke, begge trucker rister', async ({ page }) => {
@@ -117,7 +117,7 @@ test.describe('Treff og effekter', () => {
       fx.onEvent({ type: 'land', truck: 1 }, g);
     });
     await advance(page, 0.5);
-    expect((await fxState(page)).live).toBeLessThanOrEqual(900);
+    expect((await fxState(page)).live).toBeLessThanOrEqual(1400);
   });
 });
 

@@ -1,5 +1,6 @@
-import { nearest, posAt, wrapS, heightAt, HALF_WIDTH } from './track.js';
-import { groundHeight, groundSlope } from './terrain.js';
+import { nearest, posAt, wrapS, heightAt, HALF_WIDTH, WALL_LAT } from './track.js';
+import { groundHeight, groundSlope, terrainLevels } from './terrain.js';
+import { fenceAt, FENCE_LAT, FENCE_BAND } from './fences.js';
 
 // Arkade-fysikk: bare gass og sving. Trucken har en fartsvektor med litt sidegrep (litt sladd i svingene).
 export const MAX_SPEED = 40;
@@ -13,6 +14,15 @@ const BRAKE = 45;
 const JUMP_SPEED = 14; // topphøyde ≈ 3,5 (var 1,8)
 const SLOPE_ACCEL = 14; // tyngdekraft langs bakken: litt tregere opp, litt raskere ned
 const STATIC_GRIP = 1.5; // en truck som står stille uten gass blir stående i slakere bakker enn dette (m/s²)
+const FALL_OFF = 0.3; // faller bakken mer enn dette på ett steg, letter trucken (kjører utfor en kant)
+
+// Utenfor veien: gresskanten (opp til WALL_LAT) er fri, lenger ute går klokka, og etter en stund blir man hentet tilbake.
+export const OFF_GRACE = 2.5; // sekunder ute i terrenget før man hentes
+const FAR_LAT = WALL_LAT + 55; // så langt ute hentes man med en gang
+const MAX_STEP_DS = 25; // hopper nærmeste banepunkt mer enn dette på ett steg, har man skåret over til en annen del av banen
+export const RESCUE_TIME = 1.4; // hele redningen: trucken forsvinner, flyttes og dukker opp igjen (styringen er låst)
+export const RESCUE_SWAP = 0.6; // når redningsklokka passerer dette flyttes trucken tilbake på veien
+export const BLAST_TIME = 2; // redning etter rakettreff: trucken er sprengt i filler en stund før den dukker opp igjen
 
 export const COIN_ACCEL = 0.03; // ekstra akselerasjon per mynt
 export const COIN_ACCEL_MAX = 0.6;
@@ -54,6 +64,14 @@ export class Truck {
     this.wheelSpin = 0;
     this.hint = p.index;
     this.wrongWay = 0;
+    this.offTime = 0;
+    this.rescue = 0;
+    this.rescued = null;
+    this.rescueWhy = '';
+    this.skipped = false;
+    this.safeS = s; // siste trygge punkt på veien (dit man hentes tilbake)
+    this.safeLat = lat;
+    this.safeDist = dist;
     // Effekter
     this.turbo = 0;
     this.shield = 0;
@@ -84,7 +102,8 @@ export class Truck {
     if (accumulate) {
       let ds = sNew - this.s;
       ds -= Math.round(ds / track.length) * track.length;
-      this.dist += ds;
+      if (Math.abs(ds) > MAX_STEP_DS) this.skipped = true; // skar over til en annen del av banen: teller ikke
+      else this.dist += ds;
     }
     this.s = wrapS(track, sNew);
     return n;
@@ -114,7 +133,48 @@ export class Truck {
     } else if (this.drift === 0) this.driftDir = 0;
   }
 
+  // Flytter trucken tilbake til siste trygge punkt på veien, stående i kjøreretningen (aldri midt på en rampe).
+  respawn(track) {
+    let s = this.safeS, dist = this.safeDist;
+    for (const j of track.jumps) {
+      const w = wrapS(track, s);
+      if (w > j.s0 - 8 && w < j.s1 + 6) { dist -= w - (j.s0 - 8); s = j.s0 - 8; }
+    }
+    const lat = Math.max(-(HALF_WIDTH - 3), Math.min(HALF_WIDTH - 3, this.safeLat));
+    const p = posAt(track, s, lat);
+    this.x = p.x;
+    this.z = p.z;
+    this.y = groundHeight(p.x, p.z);
+    this.theta = p.theta;
+    this.vx = this.vz = this.vy = this.rampVy = 0;
+    this.air = false;
+    this.drift = this.driftGap = this.driftDir = 0;
+    this.stun = this.spin = this.slick = 0;
+    this.hint = p.index;
+    this.dist = dist;
+    this.s = wrapS(track, s);
+    this.locate(track, false);
+    this.offTime = 0;
+    this.skipped = false;
+  }
+
+  // Starter en redning (hvis ingen pågår). why: 'off' (utenfor veien), 'water' (i fjorden) eller 'rocket' (sprengt).
+  startRescue(why) {
+    if (this.rescue > 0) return;
+    this.rescue = why === 'rocket' ? BLAST_TIME : RESCUE_TIME;
+    this.rescued = why;
+    this.rescueWhy = why;
+    this.say(why === 'water' ? 'Plask! Tilbake til veien' : why === 'rocket' ? 'BOOM! Truffet av rakett' : 'Tilbake til veien', this.rescue);
+  }
+
   step(input, dt, track, locked = false) {
+    this.rescued = null;
+    if (this.rescue > 0) {
+      const before = this.rescue;
+      this.rescue = Math.max(0, this.rescue - dt);
+      if (before > RESCUE_SWAP && this.rescue <= RESCUE_SWAP) this.respawn(track);
+      locked = true;
+    }
     this.turbo = Math.max(0, this.turbo - dt);
     this.shield = Math.max(0, this.shield - dt);
     this.stun = Math.max(0, this.stun - dt);
@@ -181,22 +241,28 @@ export class Truck {
     this.x += this.vx * dt;
     this.z += this.vz * dt;
 
+    const prevLat = this.lat;
     const n = this.locate(track);
 
-    // Barriere: skyv tilbake, fjern farten utover og drei trucken mot banens retning så den aldri setter seg fast.
-    if (Math.abs(n.lat) > track.wallLat) {
+    // Gjerder: stopper trucken fra begge sider (rundt endene og over i et hopp kommer man forbi). Innenfra skyves den
+    // tilbake, mister farten utover og dreies mot banens retning så den aldri setter seg fast.
+    const a = Math.abs(n.lat);
+    this.hitWall = false;
+    if (a > FENCE_LAT && a < FENCE_LAT + FENCE_BAND && fenceAt(track, n.index, n.lat) && this.y - groundHeight(this.x, this.z) < 1.2) {
       const side = Math.sign(n.lat);
-      const over = Math.abs(n.lat) - track.wallLat;
-      this.x -= n.nx * over * side;
-      this.z -= n.nz * over * side;
-      const out = (this.vx * n.nx + this.vz * n.nz) * side;
-      if (out > 0) { this.vx -= n.nx * out * side; this.vz -= n.nz * out * side; }
+      const inside = Math.abs(prevLat) < FENCE_LAT + FENCE_BAND / 2;
+      const target = inside ? FENCE_LAT : FENCE_LAT + FENCE_BAND;
+      const move = (a - target) * side;
+      this.x -= n.nx * move;
+      this.z -= n.nz * move;
+      const out = (this.vx * n.nx + this.vz * n.nz) * side * (inside ? 1 : -1);
+      if (out > 0) { this.vx -= n.nx * out * side * (inside ? 1 : -1); this.vz -= n.nz * out * side * (inside ? 1 : -1); }
       this.vx *= 1 - 1.5 * dt;
       this.vz *= 1 - 1.5 * dt;
-      if (!stunned && vf > -1) this.theta += angleDiff(Math.atan2(n.tz, n.tx), this.theta) * 2.2 * dt;
-      this.lat = side * track.wallLat;
+      if (inside && !stunned && vf > -1) this.theta += angleDiff(Math.atan2(n.tz, n.tx), this.theta) * 2.2 * dt;
+      this.lat = side * target;
       this.hitWall = true;
-    } else this.hitWall = false;
+    }
 
     // Høyde: terreng og ramper, og fritt fall etter et hopp (eller når bakken faller bort under en kolle).
     const h = groundHeight(this.x, this.z) + heightAt(track, this.s, this.lat);
@@ -205,6 +271,9 @@ export class Truck {
       if (h < ballistic - 0.02 && this.rampVy > 2) {
         this.air = true;
         this.vy = this.rampVy;
+      } else if (h < this.y - FALL_OFF) {
+        this.air = true; // bakken forsvinner under hjulene: utfor stupet
+        this.vy = 0;
       } else {
         const rise = (h - this.y) / dt;
         this.rampVy = rise > 0 ? rise : this.rampVy * 0.9;
@@ -222,6 +291,22 @@ export class Truck {
         this.landed = true;
       }
     }
+
+    // Utenfor veien: husk siste trygge punkt, og hent trucken tilbake hvis den er for lenge eller for langt ute,
+    // havner i fjorden eller skjærer over til en annen del av banen.
+    const lat = Math.abs(this.lat);
+    if (!this.air && lat <= HALF_WIDTH && !this.rescue && heightAt(track, this.s, this.lat) === 0) {
+      this.safeS = this.s;
+      this.safeLat = this.lat;
+      this.safeDist = this.dist;
+    }
+    this.offTime = lat > WALL_LAT && !this.rescue ? this.offTime + dt : 0;
+    if (!locked) {
+      if (this.y < terrainLevels().water + 0.3) this.startRescue('water');
+      else if (lat > FAR_LAT || (this.skipped && lat > HALF_WIDTH) || this.offTime > OFF_GRACE) this.startRescue('off');
+      else if (this.offTime > 0.3 && (this.msgTimer <= 0 || this.msg.startsWith('Utenfor'))) this.say(`Utenfor veien! ${Math.ceil(OFF_GRACE - this.offTime)}`, 0.3);
+    }
+    this.skipped = false;
 
     // Feil vei: kjører mot banens retning.
     const along = this.vx * n.tx + this.vz * n.tz;

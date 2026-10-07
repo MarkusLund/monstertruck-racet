@@ -1,7 +1,8 @@
 import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS, HALF_WIDTH } from './track.js';
 import { clearance, setTerrain } from './terrain.js';
 import { placePads, onPad, PAD_TURBO } from './pads.js';
-import { Truck, TURBO_TIME, SHIELD_TIME, STUN_TIME } from './truck.js';
+import { placeFences } from './fences.js';
+import { Truck, TURBO_TIME, SHIELD_TIME } from './truck.js';
 import { pickItem, dropOil, dropMine, updateOils, updateMines } from './powerups.js';
 
 export const DT = 1 / 60;
@@ -36,7 +37,7 @@ export { clearance };
 
 // Felt som sendes til tilskuere/fjernspillere hver gang verten sender et øyeblikksbilde.
 export const TRUCK_FIELDS =['x', 'y', 'z', 'theta', 'vx', 'vz', 'vy', 'roll', 'wheelSpin', 'air', 'rampVy', 'onRoad', 'lat', 's', 'dist',
-  'wrongWay', 'drift', 'turbo', 'shield', 'stun', 'slick', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
+  'wrongWay', 'offTime', 'rescue', 'rescueWhy', 'drift', 'turbo', 'shield', 'stun', 'slick', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
 
 // Spilltilstander: 'menu' -> 'countdown' -> 'racing' -> 'finished'
 export class Game {
@@ -65,6 +66,7 @@ export class Game {
     const { track } = this;
     setTerrain(track, this.seed);
     track.pads = placePads(track);
+    track.fences = placeFences(track, this.seed);
     this.trucks.forEach((t, i) => {
       t.score = 0;
       t.finished = false;
@@ -136,6 +138,7 @@ export class Game {
     this.trucks.forEach((t, i) => {
       t.step(inputs[i], DT, this.track, locked);
       if (t.landed) this.emit({ type: 'land', truck: t.id });
+      if (t.rescued) this.emit({ type: 'rescue', truck: t.id, why: t.rescued });
     });
     this.collideTrucks();
     this.updateBarricades();
@@ -170,7 +173,7 @@ export class Game {
         const a = this.trucks[i], b = this.trucks[k];
         const dx = b.x - a.x, dz = b.z - a.z;
         const d = Math.hypot(dx, dz) || 0.001;
-        if (d >= min || Math.abs(clearance(a) - clearance(b)) > 1.8) continue;
+        if (d >= min || Math.abs(clearance(a) - clearance(b)) > 1.8 || a.rescue > 0 || b.rescue > 0) continue;
         const nx = dx / d, nz = dz / d;
         const push = (min - d) / 2;
         a.x -= nx * push; a.z -= nz * push;
@@ -244,7 +247,7 @@ export class Game {
       }
       const dx = target.x - p.x, dz = target.z - p.z;
       const d = Math.hypot(dx, dz) || 0.001;
-      if (d < 3 && clearance(target) > ROCKET_HIT_HEIGHT) { p.missed = true; return true; }
+      if (d < 3 && (clearance(target) > ROCKET_HIT_HEIGHT || target.rescue > 0)) { p.missed = true; return true; }
       if (d < 3 || p.age > 4) {
         if (d < 3) this.hitByRocket(target);
         return false;
@@ -262,8 +265,10 @@ export class Game {
       t.shield = 0;
       t.say('Skjoldet reddet deg!');
     } else {
-      t.stun = STUN_TIME;
-      t.say('Truffet av rakett!');
+      // Trucken sprenges i filler og settes tilbake på veien litt senere (som når man kjører utfor).
+      t.vx = t.vz = 0;
+      t.turbo = t.drift = 0;
+      t.startRescue('rocket');
     }
     this.emit({ type: 'hit', truck: t.id, cause: 'rocket', shielded });
   }

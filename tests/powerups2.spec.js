@@ -17,7 +17,7 @@ test('skjold tåler ett rakettreff, men ikke to', async ({ page }) => {
   });
   await advance(page, 0.1);
   let t = await truck(page, 0);
-  expect(t.stun).toBe(0);
+  expect(t.rescue).toBe(0);
   expect(t.shield).toBe(0);
   // Neste rakett treffer uten skjold.
   await page.evaluate(() => {
@@ -26,7 +26,7 @@ test('skjold tåler ett rakettreff, men ikke to', async ({ page }) => {
   });
   await advance(page, 0.1);
   t = await truck(page, 0);
-  expect(t.stun).toBeGreaterThan(0);
+  expect(t.rescue).toBeGreaterThan(0);
 });
 
 test('skjoldet vises i HUD', async ({ page }) => {

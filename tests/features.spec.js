@@ -140,7 +140,7 @@ test.describe('Power-ups', () => {
     expect(s1.trucks[0].dist).toBeGreaterThan(s0.trucks[0].dist + 20);
   });
 
-  test('rakett: stopper og spinner trucken, men skjold tar støyten', async ({ page }) => {
+  test('rakett: trucken sprenges og settes tilbake på veien, men skjold tar støyten', async ({ page }) => {
     await open(page);
     await startRace(page);
     await page.keyboard.down('ArrowUp');
@@ -149,16 +149,18 @@ test.describe('Power-ups', () => {
     await page.evaluate(() => window.__game.game.hitByRocket(window.__game.game.trucks[1]));
     await advance(page, 0.3);
     const hit = await state(page);
-    expect(hit.trucks[1].stun).toBeGreaterThan(0.5);
-    expect(hit.trucks[1].speed).toBeLessThan(before.trucks[1].speed * 0.8);
-    expect(Math.abs(hit.trucks[1].theta - before.trucks[1].theta)).toBeGreaterThan(1);
-    await expect(page.locator('#fx-1')).toContainText('Truffet');
+    expect(hit.trucks[1].rescue).toBeGreaterThan(1);
+    expect(hit.trucks[1].speed).toBeLessThan(1);
+    await expect(page.locator('#fx-1')).toContainText('BOOM');
     await advance(page, 2);
-    expect((await state(page)).trucks[1].stun).toBe(0);
+    const back = await state(page);
+    expect(back.trucks[1].rescue).toBe(0);
+    expect(Math.abs(back.trucks[1].lat)).toBeLessThanOrEqual(11);
+    expect(Math.abs(back.trucks[1].dist - before.trucks[1].dist)).toBeLessThan(15); // tilbake omtrent der den ble truffet
 
     await page.evaluate(() => { const g = window.__game.game; g.trucks[1].shield = 5; g.hitByRocket(g.trucks[1]); });
     const sh = await state(page);
-    expect(sh.trucks[1].stun).toBe(0);
+    expect(sh.trucks[1].rescue).toBe(0);
     expect(sh.trucks[1].shield).toBe(0);
   });
 
@@ -176,7 +178,7 @@ test.describe('Power-ups', () => {
     await advance(page, 1.5);
     const s = await state(page);
     expect(s.projectiles).toBe(0);
-    expect(s.trucks[0].stun).toBeGreaterThan(0);
+    expect(s.trucks[0].rescue).toBeGreaterThan(0);
   });
 
   test('veisperre endrer banen: stopper den som kjører rett inn, og forsvinner etter en stund', async ({ page }) => {
