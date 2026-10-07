@@ -47,6 +47,7 @@ export class Truck {
     this.turbo = 0;
     this.shield = 0;
     this.stun = 0;
+    this.spin = 0; // kort spinn (én runde) etter å ha blitt truffet bakfra av en annen truck
     this.draft = 0; // 0..1 slipstream
     this.catchup = 0; // 0..1 strikk-effekt for den som ligger bak
     this.msg = '';
@@ -83,11 +84,12 @@ export class Truck {
     this.turbo = Math.max(0, this.turbo - dt);
     this.shield = Math.max(0, this.shield - dt);
     this.stun = Math.max(0, this.stun - dt);
+    this.spin = Math.max(0, this.spin - dt);
     this.msgTimer = Math.max(0, this.msgTimer - dt);
     this.landed = false;
     this.jumped = false;
 
-    const stunned = this.stun > 0;
+    const stunned = this.stun > 0 || this.spin > 0;
     const throttle = locked || stunned || input.brake > 0 ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
     const brake = locked || stunned ? 0 : Math.max(0, Math.min(1, input.brake || 0));
     const jump = !locked && !stunned && !!input.jump;

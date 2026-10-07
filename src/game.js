@@ -168,9 +168,21 @@ export class Game {
           a.vx -= nx * j; a.vz -= nz * j;
           b.vx += nx * j; b.vz += nz * j;
           if (-rel > 5) this.emit({ type: 'bump', truck: a.id });
+          // Rammer man rumpa på en truck foran seg, spinner den foran rundt én gang.
+          if (-rel > 6) { this.rearHit(a, b, nx, nz); this.rearHit(b, a, -nx, -nz); }
         }
       }
     }
+  }
+
+  // `t` er truffet bakfra av `o` hvis `o` ligger bak t (n peker fra t mot o) og kjører mot t.
+  rearHit(t, o, nx, nz) {
+    if (t.stun > 0 || t.spin > 0 || t.air || o.air) return;
+    const behind = Math.cos(t.theta) * nx + Math.sin(t.theta) * nz < -0.6;
+    const ramming = Math.cos(o.theta) * nx + Math.sin(o.theta) * nz < -0.6;
+    if (!behind || !ramming) return;
+    t.spin = 0.7; // 9 rad/s i 0,7 s ≈ én runde
+    this.emit({ type: 'hit', truck: t.id });
   }
 
   // Veisperrer: tette kloss over hele asfalten som forsvinner etter en stund.
