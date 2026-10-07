@@ -280,9 +280,9 @@ test.describe('Kollisjon, hopp og tilfeldige baner', () => {
     for (let i = 0; i < 40; i++) {
       await advance(page, 0.1);
       const t = (await state(page)).trucks[0];
-      maxY = Math.max(maxY, t.y);
+      maxY = Math.max(maxY, t.y - t.ground);
       if (t.air) wasAir = true;
-      if (wasAir && !t.air && t.y === 0) landed = true;
+      if (wasAir && !t.air && t.y === t.ground) landed = true;
     }
     await page.keyboard.up('w');
     expect(wasAir).toBe(true);

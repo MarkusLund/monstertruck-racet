@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { posAt, SPACING } from './track.js';
+import { posAt, heightAt, SPACING } from './track.js';
 import { MAX_SPEED } from './truck.js';
+import { groundHeight, groundSlope, roadDistance } from './terrain.js';
 import { Countdown3D } from './countdown.js';
 import { Fx } from './fx.js';
 
@@ -142,17 +143,23 @@ function strip(track, latA, latB, y, colorAt, material, vScale = 1 / 14) {
   const pos = [], col = [], uv = [];
   const { pts, count } = track;
   const c = new THREE.Color();
+  const segs = Math.max(1, Math.ceil(Math.abs(latB - latA) / 3));
   for (let i = 0; i < count; i++) {
     const a = pts[i], b = pts[(i + 1) % count];
     const color = colorAt(i);
     if (!color) continue;
     c.set(color);
-    const v = (p, lat) => [p.x + p.nx * lat, y, p.z + p.nz * lat];
-    const quad = [v(a, latA), v(a, latB), v(b, latB), v(a, latA), v(b, latB), v(b, latA)];
+    const v = (p, lat) => { const x = p.x + p.nx * lat, z = p.z + p.nz * lat; return [x, groundHeight(x, z) + y, z]; };
     const va = i * SPACING * vScale, vb = (i + 1) * SPACING * vScale;
-    const uvs = [[0, va], [1, va], [1, vb], [0, va], [1, vb], [0, vb]];
-    for (const q of quad) { pos.push(...q); col.push(c.r, c.g, c.b); }
-    for (const t of uvs) uv.push(...t);
+    // Delt på tvers så veien følger terrenget.
+    for (let k = 0; k < segs; k++) {
+      const la = latA + (latB - latA) * (k / segs), lb = latA + (latB - latA) * ((k + 1) / segs);
+      const ua = k / segs, ub = (k + 1) / segs;
+      const quad = [v(a, la), v(a, lb), v(b, lb), v(a, la), v(b, lb), v(b, la)];
+      const uvs = [[ua, va], [ub, va], [ub, vb], [ua, va], [ub, vb], [ua, vb]];
+      for (const q of quad) { pos.push(...q); col.push(c.r, c.g, c.b); }
+      for (const t of uvs) uv.push(...t);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -165,6 +172,45 @@ function strip(track, latA, latB, y, colorAt, material, vScale = 1 / 14) {
   const m = new THREE.Mesh(g, mat);
   m.receiveShadow = true;
   return m;
+}
+
+const TERRAIN_SIZE = 1400;
+const TERRAIN_STEP = 4;
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// Bakken: rutenett med høydeforskyvning og farge etter høyde (mørk grønn i daler, lysere og tørr på koller).
+// Rett under veien senkes den litt, så asfalten aldri blir dekket av gresset.
+function terrainGeometry(cx, cz) {
+  const n = TERRAIN_SIZE / TERRAIN_STEP;
+  const x0 = Math.round(cx) - TERRAIN_SIZE / 2, z0 = Math.round(cz) - TERRAIN_SIZE / 2;
+  const pos = new Float32Array((n + 1) * (n + 1) * 3), col = new Float32Array((n + 1) * (n + 1) * 3), uv = new Float32Array((n + 1) * (n + 1) * 2);
+  const low = [0.62, 0.86, 0.62], high = [1, 0.96, 0.74];
+  for (let iz = 0; iz <= n; iz++) {
+    for (let ix = 0; ix <= n; ix++) {
+      const k = iz * (n + 1) + ix;
+      const x = x0 + ix * TERRAIN_STEP, z = z0 + iz * TERRAIN_STEP;
+      const h = groundHeight(x, z);
+      const dip = 0.15 * (1 - Math.min(1, Math.max(0, (roadDistance(x, z) - 9.5) / 3)));
+      pos.set([x, h - dip, z], k * 3);
+      const t = Math.max(0, Math.min(1, (h + 6) / 12));
+      col.set(low.map((l, c) => lerp(l, high[c], t)), k * 3);
+      uv.set([ix / n, 1 - iz / n], k * 2);
+    }
+  }
+  const index = [];
+  for (let iz = 0; iz < n; iz++) {
+    for (let ix = 0; ix < n; ix++) {
+      const a = iz * (n + 1) + ix, b = a + 1, c = a + n + 1, d = c + 1;
+      index.push(a, c, b, b, c, d);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(index);
+  g.computeVertexNormals();
+  return g;
 }
 
 function buildTruck(colors, number, tire) {
@@ -265,6 +311,7 @@ export class Renderer {
     this.scene.fog = new THREE.Fog(0xcfe8f7, 140, 420);
     this.cameras = [0, 1, 2, 3].map(() => new THREE.PerspectiveCamera(60, 1, 0.5, 600));
     this.camAngle = [0, 0, 0, 0];
+    this.camGround = [0, 0, 0, 0]; // glattet bakkehøyde under hver spiller (kameraet skal ikke riste over bulker)
     this.camReady = false;
     this.trucks = [];
     this.coinMeshes = [];
@@ -306,9 +353,8 @@ export class Renderer {
     const cx = (bb.x0 + bb.x1) / 2, cz = (bb.z0 + bb.z1) / 2;
 
     const grass = grassTexture();
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.MeshStandardMaterial({ map: grass, roughness: 1, metalness: 0 }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.set(cx, 0, cz);
+    grass.repeat.set(TERRAIN_SIZE / 20, TERRAIN_SIZE / 20);
+    const ground = new THREE.Mesh(terrainGeometry(cx, cz), new THREE.MeshStandardMaterial({ map: grass, roughness: 1, metalness: 0, vertexColors: true }));
     ground.receiveShadow = true;
     scene.add(ground);
 
@@ -335,7 +381,8 @@ export class Renderer {
         const p = track.pts[i];
         const lat = side * (track.wallLat + 0.6);
         q.setFromAxisAngle(up, -Math.atan2(p.tz, p.tx));
-        m4.compose(new THREE.Vector3(p.x + p.nx * lat, 0.7, p.z + p.nz * lat), q, new THREE.Vector3(1, 1, 1));
+        const bx = p.x + p.nx * lat, bz = p.z + p.nz * lat;
+        m4.compose(new THREE.Vector3(bx, groundHeight(bx, bz) + 0.7, bz), q, new THREE.Vector3(1, 1, 1));
         blocks.setMatrixAt(n, m4);
         blocks.setColorAt(n, new THREE.Color((i / 2) % 2 ? 0xe8412c : 0xf4f4f4));
         n++;
@@ -353,7 +400,7 @@ export class Renderer {
     });
     const start = posAt(track, 0, 0);
     const finish = new THREE.Group();
-    finish.position.set(start.x, 0, start.z);
+    finish.position.set(start.x, groundHeight(start.x, start.z), start.z);
     finish.rotation.y = -start.theta;
     const line = new THREE.Mesh(new THREE.PlaneGeometry(3, hw * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.7 }));
     line.receiveShadow = true;
@@ -407,7 +454,7 @@ export class Renderer {
     trunks.castShadow = leaves.castShadow = true;
     trunks.receiveShadow = leaves.receiveShadow = true;
     spots.forEach(([x, z, s], i) => {
-      m4.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
+      m4.compose(new THREE.Vector3(x, groundHeight(x, z) - 0.3, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
       trunks.setMatrixAt(i, m4);
       leaves.setMatrixAt(i, m4);
     });
@@ -445,7 +492,7 @@ export class Renderer {
       ramp.castShadow = true;
       ramp.receiveShadow = true;
       const p = posAt(track, j.s0, 0);
-      ramp.position.set(p.x, 0.05, p.z);
+      ramp.position.set(p.x, groundHeight(p.x, p.z) + 0.05, p.z);
       ramp.rotation.y = -p.theta;
       scene.add(ramp);
     }
@@ -516,7 +563,7 @@ export class Renderer {
     const mat = new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0x7a5200, roughness: 0.25, metalness: 0.7 });
     this.coinMeshes = coins.map((c) => {
       const holder = new THREE.Group();
-      holder.position.set(c.x, 1.6, c.z);
+      holder.position.set(c.x, groundHeight(c.x, c.z) + 1.6, c.z);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = true;
       holder.add(mesh);
@@ -534,7 +581,7 @@ export class Renderer {
     game.boxes.forEach((b, k) => {
       const m = this.boxMeshes[k];
       m.visible = b.cooldown <= 0;
-      m.position.set(b.x, 2.4 + Math.sin(time * 3 + k) * 0.3, b.z);
+      m.position.set(b.x, groundHeight(b.x, b.z) + 2.4 + Math.sin(time * 3 + k) * 0.3, b.z);
       m.rotation.set(0.4, time * 1.8 + k, 0.3);
     });
     this.boxMeshes.forEach((m, k) => { if (k >= game.boxes.length) m.visible = false; });
@@ -556,7 +603,7 @@ export class Renderer {
     this.rocketMeshes.forEach((m, k) => {
       const p = game.projectiles[k];
       m.visible = !!p;
-      if (p) { m.position.set(p.x, 2, p.z); m.rotation.y = -p.dir; }
+      if (p) { m.position.set(p.x, groundHeight(p.x, p.z) + 2, p.z); m.rotation.y = -p.dir; }
     });
 
     grow(this.barricadeMeshes, () => {
@@ -579,7 +626,7 @@ export class Renderer {
       const b = game.barricades[k];
       m.visible = !!b;
       if (b) {
-        m.position.set(b.x, 0, b.z);
+        m.position.set(b.x, groundHeight(b.x, b.z) - 0.2, b.z);
         m.rotation.y = -b.theta;
         // Blinker når den snart forsvinner.
         m.visible = b.life > 3 || Math.floor(time * 8) % 2 === 0;
@@ -602,8 +649,13 @@ export class Renderer {
     const a = this.camAngle[i];
     const fx = Math.cos(a), fz = Math.sin(a);
     const frac = Math.min(1, truck.speed / MAX_SPEED);
-    cam.position.set(truck.x - fx * (CAM_BACK + frac * 2), CAM_HEIGHT + truck.y * 0.6, truck.z - fz * (CAM_BACK + frac * 2));
-    cam.lookAt(truck.x + fx * CAM_LOOK_AHEAD, truck.y * 0.4, truck.z + fz * CAM_LOOK_AHEAD);
+    const ground = groundHeight(truck.x, truck.z);
+    this.camGround[i] = snap ? ground : this.camGround[i] + (ground - this.camGround[i]) * Math.min(1, 4 * dt);
+    const base = this.camGround[i], up = truck.y - ground; // up: høyde over bakken (hopp)
+    const cx = truck.x - fx * (CAM_BACK + frac * 2), cz = truck.z - fz * (CAM_BACK + frac * 2);
+    const lx = truck.x + fx * CAM_LOOK_AHEAD, lz = truck.z + fz * CAM_LOOK_AHEAD;
+    cam.position.set(cx, Math.max(base + CAM_HEIGHT + up * 0.6, groundHeight(cx, cz) + 3), cz);
+    cam.lookAt(lx, base * 0.5 + groundHeight(lx, lz) * 0.5 + up * 0.4, lz);
     cam.fov = 58 + frac * 10;
   }
 
@@ -622,9 +674,21 @@ export class Renderer {
       m.root.rotation.y = -t.theta;
       const bounce = Math.sin(time * 40 + i) * 0.04 * Math.min(1, t.speed / 20) * (t.onRoad ? 0.4 : 2.5);
       m.chassis.position.y = bounce;
-      m.chassis.rotation.x = t.roll;
-      // Nesa peker opp på vei opp av rampen og ned igjen mot landing.
-      m.chassis.rotation.z = t.air ? Math.max(-0.5, Math.min(0.5, t.vy * 0.04)) : Math.max(0, Math.min(0.35, t.rampVy * 0.035));
+      // Hellingen under trucken (terreng og ramper); i lufta peker nesa etter vertikalfarten.
+      let pitchGoal, rollGoal = 0;
+      if (t.air) {
+        pitchGoal = Math.max(-0.5, Math.min(0.5, t.vy * 0.04));
+      } else {
+        const slope = groundSlope(t.x, t.z, t.theta);
+        const ramp = Math.max(0, (heightAt(game.track, t.s + 1, t.lat) - heightAt(game.track, t.s - 1, t.lat)) / 2);
+        pitchGoal = Math.atan(slope.forward) + Math.atan(ramp);
+        rollGoal = -Math.atan(slope.side);
+      }
+      const k = Math.min(1, 12 * dt);
+      m.pitch = snap || m.pitch === undefined ? pitchGoal : m.pitch + (pitchGoal - m.pitch) * k;
+      m.tilt = snap || m.tilt === undefined ? rollGoal : m.tilt + (rollGoal - m.tilt) * k;
+      m.chassis.rotation.x = t.roll + m.tilt;
+      m.chassis.rotation.z = m.pitch;
       m.flames.visible = t.turbo > 0;
       if (m.flames.visible) m.flames.scale.set(0.8 + Math.random() * 0.5, 1, 1);
       m.bubble.visible = t.shield > 0 && (t.shield > 2 || Math.floor(time * 8) % 2 === 0);
@@ -660,8 +724,8 @@ export class Renderer {
       cam.aspect = vw / vh;
       cam.updateProjectionMatrix();
       const tr = game.trucks[ti];
-      this.sun.target.position.set(tr.x, 0, tr.z);
-      this.sun.position.set(tr.x - 70, 120, tr.z + 45);
+      this.sun.target.position.set(tr.x, tr.y, tr.z);
+      this.sun.position.set(tr.x - 70, tr.y + 120, tr.z + 45);
       renderer.render(this.scene, cam);
     });
     if (this.countdown.update(game)) this.countdown.render(renderer, w, h);

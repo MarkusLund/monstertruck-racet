@@ -1,4 +1,5 @@
 import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS } from './track.js';
+import { groundHeight, setTerrain } from './terrain.js';
 import { Truck, TURBO_TIME, SHIELD_TIME, STUN_TIME } from './truck.js';
 
 export const DT = 1 / 60;
@@ -27,6 +28,9 @@ export function mulberry(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+// Høyde over bakken (y er absolutt: terreng + hoppehøyde).
+export const clearance = (o) => o.y - groundHeight(o.x, o.z);
 
 // Felt som sendes til tilskuere/fjernspillere hver gang verten sender et øyeblikksbilde.
 export const TRUCK_FIELDS =['x', 'y', 'z', 'theta', 'vx', 'vz', 'vy', 'roll', 'wheelSpin', 'air', 'rampVy', 'onRoad', 'lat', 's', 'dist',
@@ -57,6 +61,7 @@ export class Game {
     const r = mulberry(this.seed);
     this.track = buildTrack(r);
     const { track } = this;
+    setTerrain(track, this.seed);
     this.trucks.forEach((t, i) => {
       t.score = 0;
       t.finished = false;
@@ -158,7 +163,7 @@ export class Game {
         const a = this.trucks[i], b = this.trucks[k];
         const dx = b.x - a.x, dz = b.z - a.z;
         const d = Math.hypot(dx, dz) || 0.001;
-        if (d >= min || Math.abs(a.y - b.y) > 1.8) continue;
+        if (d >= min || Math.abs(clearance(a) - clearance(b)) > 1.8) continue;
         const nx = dx / d, nz = dz / d;
         const push = (min - d) / 2;
         a.x -= nx * push; a.z -= nz * push;
@@ -193,7 +198,7 @@ export class Game {
     for (const bar of this.barricades) {
       for (const t of this.trucks) {
         const ds = wrapDiff(t.s - bar.s, length);
-        if (Math.abs(ds) > 4.2 || Math.abs(t.lat - bar.lat) > bar.halfWidth + 1.4 || t.y > 1.4) continue;
+        if (Math.abs(ds) > 4.2 || Math.abs(t.lat - bar.lat) > bar.halfWidth + 1.4 || clearance(t) > 1.4) continue;
         if (t.shield > 0) {
           t.shield = 0;
           bar.life = 0;
@@ -232,7 +237,7 @@ export class Game {
       }
       const dx = target.x - p.x, dz = target.z - p.z;
       const d = Math.hypot(dx, dz) || 0.001;
-      if (d < 3 && target.y > ROCKET_HIT_HEIGHT) { p.missed = true; return true; }
+      if (d < 3 && clearance(target) > ROCKET_HIT_HEIGHT) { p.missed = true; return true; }
       if (d < 3 || p.age > 4) {
         if (d < 3) this.hitByRocket(target);
         return false;
@@ -299,7 +304,7 @@ export class Game {
       }
     }
     // Item-bokser
-    if (this.state === 'racing' && t.y < 2.5) {
+    if (this.state === 'racing' && clearance(t) < 2.5) {
       for (const b of this.boxes) {
         if (b.cooldown > 0 || Math.abs(b.x - t.x) > BOX_RADIUS || Math.abs(b.z - t.z) > BOX_RADIUS) continue;
         if (Math.hypot(b.x - t.x, b.z - t.z) < BOX_RADIUS) {

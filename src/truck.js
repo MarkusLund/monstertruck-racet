@@ -1,4 +1,5 @@
 import { nearest, posAt, wrapS, heightAt, HALF_WIDTH } from './track.js';
+import { groundHeight, groundSlope } from './terrain.js';
 
 // Arkade-fysikk: bare gass og sving. Trucken har en fartsvektor med litt sidegrep (litt sladd i svingene).
 export const MAX_SPEED = 40;
@@ -10,6 +11,7 @@ const GRAVITY = 28;
 const REVERSE_MAX = 16;
 const BRAKE = 45;
 const JUMP_SPEED = 14; // topphøyde ≈ 3,5 (var 1,8)
+const SLOPE_ACCEL = 14; // tyngdekraft langs bakken: litt tregere opp, litt raskere ned
 
 export const COIN_ACCEL = 0.03; // ekstra akselerasjon per mynt
 export const COIN_ACCEL_MAX = 0.6;
@@ -31,7 +33,7 @@ export class Truck {
     const p = posAt(track, s, lat);
     this.x = p.x;
     this.z = p.z;
-    this.y = 0;
+    this.y = groundHeight(p.x, p.z); // y er absolutt høyde: terreng + hoppehøyde
     this.vy = 0;
     this.air = false;
     this.rampVy = 0;
@@ -110,6 +112,7 @@ export class Truck {
       if (vf < max) vf = Math.min(max, vf + ACCEL * accMul * throttle * dt);
       else vf -= (vf - max) * (this.onRoad ? 1.2 : 3) * dt;
       vf -= vf * (throttle > 0 ? 0.12 : 0.7) * dt; // rullemotstand, mer uten gass
+      vf -= groundSlope(this.x, this.z, this.theta).forward * SLOPE_ACCEL * dt;
       if (brake > 0) {
         // Brems mens trucken ruller framover, deretter rygging.
         if (vf > 0.5) vf = Math.max(0, vf - BRAKE * brake * dt);
@@ -160,10 +163,11 @@ export class Truck {
       this.hitWall = true;
     } else this.hitWall = false;
 
-    // Høyde: ramper, og fritt fall etter et hopp.
-    const h = heightAt(track, this.s, this.lat);
+    // Høyde: terreng og ramper, og fritt fall etter et hopp (eller når bakken faller bort under en kolle).
+    const h = groundHeight(this.x, this.z) + heightAt(track, this.s, this.lat);
     if (!this.air) {
-      if (h < this.y - 0.2 && this.rampVy > 2) {
+      const ballistic = this.y + this.rampVy * dt - 0.5 * GRAVITY * dt * dt;
+      if (h < ballistic - 0.02 && this.rampVy > 2) {
         this.air = true;
         this.vy = this.rampVy;
       } else {

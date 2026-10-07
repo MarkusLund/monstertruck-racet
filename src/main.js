@@ -3,6 +3,7 @@ import { Input } from './input.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
 import { MAX_SPEED } from './truck.js';
+import { groundHeight } from './terrain.js';
 import { Net, lerpSnapshot } from './net.js';
 import { loadRecords, submitTime } from './records.js';
 
@@ -415,7 +416,7 @@ window.__game = {
         x: t.x, z: t.z, theta: t.theta, speed: t.speed, score: t.score,
         lat: t.lat, s: t.s, dist: t.dist, lap: game.lap(t), place: game.place(t),
         onRoad: t.onRoad, wrongWay: t.wrongWay,
-        y: t.y, air: t.air, turbo: t.turbo, shield: t.shield, stun: t.stun, draft: t.draft, catchup: t.catchup, msg: t.msg,
+        y: t.y, ground: groundHeight(t.x, t.z), air: t.air, turbo: t.turbo, shield: t.shield, stun: t.stun, draft: t.draft, catchup: t.catchup, msg: t.msg,
       })),
       boxes: game.boxes.length,
       barricades: game.barricades.map((b) => ({ s: b.s, life: b.life })),
