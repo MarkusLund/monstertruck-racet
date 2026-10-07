@@ -88,7 +88,22 @@ function connect(ws, url) {
 export function relayPlugin() {
   return {
     name: 'monstertruck-relay',
-    configureServer(server) { attach(server.httpServer, server.middlewares); },
+    configureServer(server) {
+      attach(server.httpServer, server.middlewares);
+      // Skrives etter at Vite har printet sine adresser.
+      server.httpServer?.once('listening', () => setTimeout(() => {
+        const port = server.httpServer.address()?.port;
+        const lan = lanAddresses().map((a) => `http://${a}:${port}`);
+        console.log(`
+  \x1b[1mFlerspiller\x1b[0m: du er vert når du åpner http://localhost:${port}
+  Andre på samme nett åpner:  ${lan.join('  ') || '(ingen nettverksadresse funnet)'}
+  Fungerer ikke det (gjestenett med klientisolering)? Åpne en ny terminal og kjør:
+      \x1b[1mnpm run tunnel\x1b[0m   (Cloudflare, krever «brew install cloudflared»)
+  Adressen (https://….trycloudflare.com) dukker opp på startskjermen etter noen sekunder,
+  og kan sendes til de andre. Stopp tunnelen med Ctrl+C når dere er ferdige.
+`);
+      }, 300));
+    },
     configurePreviewServer(server) { attach(server.httpServer, server.middlewares); },
   };
 }

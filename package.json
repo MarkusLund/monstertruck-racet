@@ -7,6 +7,7 @@
   "scripts": {
     "start": "vite --open",
     "host": "vite --open",
+    "tunnel": "cloudflared tunnel --metrics 127.0.0.1:20241 --url http://localhost:5173",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --open",
