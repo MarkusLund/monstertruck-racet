@@ -214,7 +214,15 @@ function clientInput() {
   return { th: Math.max(a.throttle, b.throttle), st: clamp(a.steer + b.steer, -1, 1), br: Math.max(a.brake, b.brake), jp: a.jump || b.jump };
 }
 
-const SNAP_DELAY = 2;
+let snapDelay = 3, delayAt = 0;
+// Bufferdybden følger jitteren: p95 av gapene mellom snapshots bestemmer hvor langt bak vi spiller (2–5 snapshots).
+function updateSnapDelay(now) {
+  if (now - delayAt < 1000 || client.gaps.length < 40) return;
+  delayAt = now;
+  const g = client.gaps.slice().sort((x, y) => x - y);
+  const want = clamp(1 + g[Math.floor(g.length * 0.95)] / 33.3, 2, 5);
+  snapDelay += clamp(want - snapDelay, -0.25, 0.5);
+}
 function clientStep(now, dt) {
   input.poll();
   if (input.pressed.size || input.padEdges.size) sound.unlock();
@@ -230,9 +238,10 @@ function clientStep(now, dt) {
   }
   const buf = client.buf;
   if (buf.length) {
+    updateSnapDelay(now);
     const newest = buf[buf.length - 1].q, oldest = buf[0].q;
-    const err = newest - SNAP_DELAY - client.rq;
-    if (Math.abs(err) > 6) client.rq = newest - SNAP_DELAY;
+    const err = newest - snapDelay - client.rq;
+    if (Math.abs(err) > 6) client.rq = newest - snapDelay;
     else client.rq += dt * 30 * (1 + clamp(err * 0.15, -0.3, 0.3));
     if (client.rq >= newest) { client.rq = newest; client.dry++; }
     client.rq = Math.max(client.rq, oldest);
@@ -443,7 +452,7 @@ function updateDebug(now) {
   fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now;
   const g = client.gaps.slice().sort((x, y) => x - y);
   const pc = (p) => (g.length ? g[Math.min(g.length - 1, Math.floor(g.length * p))] : 0).toFixed(0);
-  dbg.textContent = `fps ${fps}  dpr ${window.devicePixelRatio}  kvalitet ${(renderer.quality ?? 1).toFixed(2)}  canvas ${canvas.width}x${canvas.height}\nsnap-gap p50 ${pc(0.5)} p90 ${pc(0.9)} p99 ${pc(0.99)} ms  buffer ${client.buf.length}  tomt ${client.dry}`;
+  dbg.textContent = `fps ${fps}  dpr ${window.devicePixelRatio}  kvalitet ${(renderer.quality ?? 1).toFixed(2)}  canvas ${canvas.width}x${canvas.height}\nsnap-gap p50 ${pc(0.5)} p90 ${pc(0.9)} p99 ${pc(0.99)} ms  buffer ${client.buf.length}  forsinkelse ${snapDelay.toFixed(1)}  tomt ${client.dry}`;
 }
 
 let acc = 0, last = performance.now(), clock = 0;
@@ -495,7 +504,7 @@ window.__game = {
       trucks: game.trucks.map((t) => ({
         x: t.x, z: t.z, theta: t.theta, speed: t.speed, score: t.score,
         lat: t.lat, s: t.s, dist: t.dist, lap: game.lap(t), place: game.place(t),
-        onRoad: t.onRoad, wrongWay: t.wrongWay,
+        onRoad: t.onRoad, wrongWay: t.wrongWay, offTime: t.offTime, rescue: t.rescue,
         y: t.y, ground: groundHeight(t.x, t.z), air: t.air, drift: t.drift, turbo: t.turbo, shield: t.shield, stun: t.stun, slick: t.slick, draft: t.draft, catchup: t.catchup, msg: t.msg,
       })),
       boxes: game.boxes.length,
