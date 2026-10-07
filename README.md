@@ -54,7 +54,7 @@ Slik fungerer det: fjernspillere sender bare gass og sving til verten via en lit
 
 ## Hosting på Cloudflare (ingen vert nødvendig)
 
-`server/worker.js` er en Cloudflare Worker med ett Durable Object per rom (`?room=navn`) som kjører hele simuleringen. Alle spillerne er vanlige klienter, og den som trykker `Enter` starter løpet.
+`server/worker.js` er en Cloudflare Worker med ett Durable Object per rom (`?room=navn`) som kjører hele simuleringen. Alle spillerne er vanlige klienter, og den som trykker `Enter` starter løpet. Legg til `?restart` i adressen for å nullstille spillet i rommet (alle sendes tilbake til lobbyen).
 
 ```bash
 npm run deploy     # bygger og deployer med wrangler

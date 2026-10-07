@@ -7,9 +7,10 @@ const ICE = { iceServers: [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.
 const FAST = new Set(['snap', 'in']);
 
 export class Net {
-  constructor(role, room, handlers) {
+  constructor(role, room, handlers, pid = null) {
     this.role = role;
     this.room = room;
+    this.pid = pid;
     this.handlers = handlers;
     this.ws = null;
     this.stopped = false;
@@ -22,7 +23,8 @@ export class Net {
 
   open() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws?role=${this.role}&room=${encodeURIComponent(this.room)}`);
+    const pid = this.pid ? `&pid=${encodeURIComponent(this.pid)}` : '';
+    const ws = new WebSocket(`${proto}://${location.host}/ws?role=${this.role}&room=${encodeURIComponent(this.room)}${pid}`);
     this.ws = ws;
     ws.onopen = () => this.handlers.open?.();
     ws.onmessage = (e) => {

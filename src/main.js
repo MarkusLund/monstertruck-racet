@@ -22,7 +22,23 @@ const room = params.get('room') || 'main';
 const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const role = params.get('role') || (isLocal ? 'host' : 'client');
 const online = !manual || params.has('room');
+// ?restart nullstiller spillet som kjører på Cloudflare (sendes én gang, og fjernes fra adressen så en ny innlasting ikke gjør det igjen).
+let restart = role === 'client' && params.has('restart');
+if (restart) {
+  params.delete('restart');
+  history.replaceState(null, '', location.pathname + (params.size ? `?${params}` : '') + location.hash);
+}
 document.body.classList.toggle('client', role === 'client');
+
+// Fast id for denne nettleseren, så spillserveren gir oss tilbake samme truck etter en ny innlasting eller ny tilkobling.
+function playerId() {
+  const fresh = () => crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  try {
+    let id = localStorage.getItem('monstertruck-pid');
+    if (!id) localStorage.setItem('monstertruck-pid', (id = fresh()));
+    return id;
+  } catch { return fresh(); }
+}
 
 const COLORS = ['#ff6a50', '#5aa2ff', '#4fd36a', '#ffc83a'];
 const COLOR_NAMES = ['rød', 'blå', 'grønn', 'gul'];
@@ -99,7 +115,11 @@ function hostMessage(m) {
 const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '', buf: [], rq: 0, gaps: [], dry: 0 };
 
 function clientMessage(m) {
-  if (m.t === 'hello') { client.id = m.id; client.status = m.host ? 'lobby' : 'nohost'; }
+  if (m.t === 'hello') {
+    client.id = m.id;
+    client.status = m.host ? 'lobby' : 'nohost';
+    if (restart && m.host) { restart = false; net.send({ t: 'restart' }); }
+  }
   else if (m.t === 'host') client.status = 'lobby';
   else if (m.t === 'hostgone') { client.status = 'nohost'; client.cur = client.prev = null; client.buf = []; }
   else if (m.t === 'lobby') {
@@ -140,7 +160,7 @@ if (online && role === 'host') {
     open() { client.status = 'lobby'; },
     close() { client.status = 'connecting'; },
     message: clientMessage,
-  });
+  }, playerId());
 }
 
 // ---------- Simulering (vert) ----------
