@@ -2,7 +2,7 @@ import { Game, DT, LAPS, MAX_PLAYERS } from './game.js';
 import { Input } from './input.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
-import { MAX_SPEED } from './truck.js';
+import { MAX_SPEED, driftTier } from './truck.js';
 import { groundHeight } from './terrain.js';
 import { Net, lerpSnapshot } from './net.js';
 import { loadRecords, submitTime } from './records.js';
@@ -303,6 +303,7 @@ function updateHud(views = currentViews()) {
     if (game.state === 'racing') {
       if (t.msgTimer > 0) { text = t.msg; cls = t.stun > 0 ? 'stun' : t.turbo > 0 ? 'turbo' : t.shield > 0 ? 'shield' : ''; }
       else if (t.stun > 0) { text = 'Truffet!'; cls = 'stun'; }
+      else if (driftTier(t.drift) > 0) { text = 'DRIFT'; cls = `drift${driftTier(t.drift)}`; }
       else if (t.turbo > 0) { text = 'TURBO!'; cls = 'turbo'; }
       else if (t.draft > 0.3) { text = 'Slipstream'; cls = 'draft'; }
       else if (t.shield > 0) { text = 'Skjold'; cls = 'shield'; }
@@ -416,12 +417,13 @@ window.__game = {
         x: t.x, z: t.z, theta: t.theta, speed: t.speed, score: t.score,
         lat: t.lat, s: t.s, dist: t.dist, lap: game.lap(t), place: game.place(t),
         onRoad: t.onRoad, wrongWay: t.wrongWay,
-        y: t.y, ground: groundHeight(t.x, t.z), air: t.air, turbo: t.turbo, shield: t.shield, stun: t.stun, draft: t.draft, catchup: t.catchup, msg: t.msg,
+        y: t.y, ground: groundHeight(t.x, t.z), air: t.air, drift: t.drift, turbo: t.turbo, shield: t.shield, stun: t.stun, draft: t.draft, catchup: t.catchup, msg: t.msg,
       })),
       boxes: game.boxes.length,
       barricades: game.barricades.map((b) => ({ s: b.s, life: b.life })),
       projectiles: game.projectiles.length,
       jumps: game.track.jumps,
+      padList: game.track.pads,
       pads: [input.padInfo(0), input.padInfo(1)],
       triangles: renderer.renderer.info.render.triangles,
       net: { role, peers: host.peers.size, slots: host.slots.length, direct: net ? net.direct : 0, clientStatus: client.status, clientSlot: client.slot, seed: game.seed },
@@ -431,9 +433,10 @@ window.__game = {
   teleport(i, s, lat = 0, lap = 0) {
     game.trucks[i].place(game.track, s, lat, lap * game.track.length + s);
   },
-  // Fjerner item-bokser (og eventuelt ramper) så fysikktester ikke forstyrres av tilfeldige power-ups.
+  // Fjerner item-bokser (boost-pads og eventuelt ramper) så fysikktester ikke forstyrres av tilfeldige power-ups.
   quiet(keepJumps = false) {
     game.boxes.forEach((b) => { b.cooldown = 1e9; });
+    game.track.pads = [];
     if (!keepJumps) game.track.jumps = [];
   },
   addBarricade(s) {

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { posAt, heightAt, SPACING } from './track.js';
-import { MAX_SPEED } from './truck.js';
+import { MAX_SPEED, driftTier } from './truck.js';
 import { groundHeight, groundSlope, roadDistance } from './terrain.js';
+import { PAD_LENGTH, PAD_HALF_WIDTH } from './pads.js';
 import { Countdown3D } from './countdown.js';
 import { Fx } from './fx.js';
 
@@ -36,6 +37,9 @@ function canvasTexture(size, draw, repeat) {
   t.anisotropy = 4;
   return t;
 }
+
+const SPARKS = 28;
+const DRIFT_COLORS = [0xffe23a, 0xff8a1f, 0x3aa8ff]; // gul, oransje, blå
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 
@@ -172,6 +176,29 @@ function strip(track, latA, latB, y, colorAt, material, vScale = 1 / 14) {
   const m = new THREE.Mesh(g, mat);
   m.receiveShadow = true;
   return m;
+}
+
+// Boost-pad som et lite rutenett der hvert hjørne følger terrenget (en flat plate ville gravd seg ned i bakkene).
+// Teksturens opp-retning (v) peker i kjøreretningen.
+function padGeometry(track, pad, n = 4) {
+  const pos = [], uv = [], index = [];
+  for (let i = 0; i <= n; i++) {
+    for (let k = 0; k <= n; k++) {
+      const u = k / n, v = i / n;
+      const p = posAt(track, pad.s + (v - 0.5) * PAD_LENGTH, pad.lat + (u - 0.5) * PAD_HALF_WIDTH * 2);
+      pos.push(p.x, groundHeight(p.x, p.z) + 0.09, p.z);
+      uv.push(u, v);
+      if (i < n && k < n) {
+        const a = i * (n + 1) + k, b = a + n + 1;
+        index.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(index);
+  return g;
 }
 
 const TERRAIN_SIZE = 1400;
@@ -496,6 +523,21 @@ export class Renderer {
       ramp.rotation.y = -p.theta;
       scene.add(ramp);
     }
+
+    // Boost-pads: lysende piler på asfalten.
+    const arrows = canvasTexture(128, (g, sz) => {
+      g.fillStyle = '#06222e';
+      g.fillRect(0, 0, sz, sz);
+      g.fillStyle = '#35e8ff';
+      for (const y of [0.08, 0.4]) {
+        g.beginPath();
+        g.moveTo(sz * 0.5, sz * y); g.lineTo(sz * 0.92, sz * (y + 0.34)); g.lineTo(sz * 0.7, sz * (y + 0.34));
+        g.lineTo(sz * 0.5, sz * (y + 0.16)); g.lineTo(sz * 0.3, sz * (y + 0.34)); g.lineTo(sz * 0.08, sz * (y + 0.34));
+        g.fill();
+      }
+    }, 0);
+    const padMat = new THREE.MeshBasicMaterial({ map: arrows, side: THREE.DoubleSide });
+    for (const pad of track.pads) scene.add(new THREE.Mesh(padGeometry(track, pad), padMat));
   }
 
   // Trucker og effekter lages en gang og gjenbrukes mellom løp.
@@ -522,8 +564,16 @@ export class Renderer {
       bubble.position.y = 2;
       bubble.visible = false;
       t.root.add(bubble);
+      // Drift-gnister/røyk ved bakhjulene; fargen følger drift-ladningen.
+      const sparkGeo = new THREE.BufferGeometry();
+      sparkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SPARKS * 3), 3));
+      const sparkMat = new THREE.PointsMaterial({ size: 0.7, transparent: true, opacity: 0.9, depthWrite: false });
+      const sparks = new THREE.Points(sparkGeo, sparkMat);
+      sparks.frustumCulled = false;
+      sparks.visible = false;
+      t.root.add(sparks);
       this.scene.add(t.root);
-      return { ...t, flames, bubble };
+      return { ...t, flames, bubble, sparks };
     });
     // Item-boks (roterende «?»-kube), veisperre og rakett deler geometri.
     this.boxGeo = new THREE.BoxGeometry(2.2, 2.2, 2.2);
@@ -659,6 +709,19 @@ export class Renderer {
     cam.fov = 58 + frac * 10;
   }
 
+  updateSparks(sparks, t) {
+    const tier = driftTier(t.drift);
+    sparks.visible = tier > 0 && !t.air;
+    if (!sparks.visible) return;
+    sparks.material.color.setHex(DRIFT_COLORS[tier - 1]);
+    const pos = sparks.geometry.attributes.position;
+    for (let k = 0; k < SPARKS; k++) {
+      const side = k % 2 ? 1 : -1;
+      pos.setXYZ(k, -3 - Math.random() * 1.8, 0.2 + Math.random() * 1.1, side * 1.7 + (Math.random() - 0.5) * 1.2);
+    }
+    pos.needsUpdate = true;
+  }
+
   // views: hvilke trucker som får en egen skjerm (standard: alle). En fjernspiller viser bare sin egen.
   draw(game, dt, time, views = game.trucks.map((_, i) => i)) {
     this.buildActors();
@@ -691,6 +754,7 @@ export class Renderer {
       m.chassis.rotation.z = m.pitch;
       m.flames.visible = t.turbo > 0;
       if (m.flames.visible) m.flames.scale.set(0.8 + Math.random() * 0.5, 1, 1);
+      this.updateSparks(m.sparks, t);
       m.bubble.visible = t.shield > 0 && (t.shield > 2 || Math.floor(time * 8) % 2 === 0);
       m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
       this.updateCamera(i, t, dt, snap);

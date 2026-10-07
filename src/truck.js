@@ -18,6 +18,14 @@ export const COIN_ACCEL_MAX = 0.6;
 export const TURBO_TIME = 2.2;
 export const SHIELD_TIME = 10;
 export const STUN_TIME = 1.4;
+// Drift-boost: sladd (full styring i fart + gass) bygger ladning (sekunder); ved utgang får trucken turbo.
+const DRIFT_MIN_SPEED = 20;
+const DRIFT_MIN_STEER = 0.55;
+const DRIFT_GRACE = 0.2; // hvor lenge driften tåler et glipp før den regnes som avsluttet
+export const DRIFT_TIERS = [0.7, 1.5, 2.5]; // ladning for gul, oransje og blå
+const DRIFT_MAX = 3;
+const DRIFT_BOOST_MAX = 1.2;
+export const driftTier = (charge) => DRIFT_TIERS.filter((x) => charge >= x).length;
 
 const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
@@ -50,6 +58,9 @@ export class Truck {
     this.shield = 0;
     this.stun = 0;
     this.spin = 0; // kort spinn (én runde) etter å ha blitt truffet bakfra av en annen truck
+    this.drift = 0; // drift-ladning i sekunder
+    this.driftGap = 0;
+    this.driftDir = 0;
     this.draft = 0; // 0..1 slipstream
     this.catchup = 0; // 0..1 strikk-effekt for den som ligger bak
     this.msg = '';
@@ -80,6 +91,25 @@ export class Truck {
   say(text, time = 1.6) {
     this.msg = text;
     this.msgTimer = time;
+  }
+
+  // Bygger drift-ladning mens man tar en sving med full styring i fart; ved avslutning (eller retningsskifte)
+  // gir ladningen turbo proporsjonalt.
+  updateDrift(dt, steer, throttle, stunned) {
+    const drifting = !this.air && !stunned && this.speed > DRIFT_MIN_SPEED && Math.abs(steer) > DRIFT_MIN_STEER && throttle > 0;
+    const dir = Math.sign(steer);
+    if (drifting && (!this.driftDir || dir === this.driftDir)) {
+      this.driftDir = dir;
+      this.drift = Math.min(DRIFT_MAX, this.drift + dt);
+      this.driftGap = DRIFT_GRACE;
+    } else if (this.drift > 0 && (drifting || (this.driftGap -= dt) <= 0)) {
+      if (!this.air && !stunned && this.drift >= DRIFT_TIERS[0]) {
+        this.turbo = Math.max(this.turbo, Math.min(DRIFT_BOOST_MAX, 0.4 + 0.8 * (this.drift / DRIFT_TIERS[2])));
+        this.say('DRIFT-BOOST!');
+      }
+      this.drift = 0;
+      this.driftDir = 0;
+    } else if (this.drift === 0) this.driftDir = 0;
   }
 
   step(input, dt, track, locked = false) {
@@ -125,6 +155,7 @@ export class Truck {
       this.vy = JUMP_SPEED;
       this.jumped = true;
     }
+    this.updateDrift(dt, steer, throttle, stunned);
     vs *= Math.exp(-GRIP * (air ? 0.1 : 1) * dt);
 
     const speedFrac = Math.min(1, Math.abs(vf) / MAX_SPEED);

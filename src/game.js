@@ -1,5 +1,6 @@
 import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS } from './track.js';
 import { groundHeight, setTerrain } from './terrain.js';
+import { placePads, onPad, PAD_TURBO } from './pads.js';
 import { Truck, TURBO_TIME, SHIELD_TIME, STUN_TIME } from './truck.js';
 
 export const DT = 1 / 60;
@@ -34,7 +35,7 @@ export const clearance = (o) => o.y - groundHeight(o.x, o.z);
 
 // Felt som sendes til tilskuere/fjernspillere hver gang verten sender et øyeblikksbilde.
 export const TRUCK_FIELDS =['x', 'y', 'z', 'theta', 'vx', 'vz', 'vy', 'roll', 'wheelSpin', 'air', 'rampVy', 'onRoad', 'lat', 's', 'dist',
-  'wrongWay', 'turbo', 'shield', 'stun', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
+  'wrongWay', 'drift', 'turbo', 'shield', 'stun', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
 
 // Spilltilstander: 'menu' -> 'countdown' -> 'racing' -> 'finished'
 export class Game {
@@ -62,6 +63,7 @@ export class Game {
     this.track = buildTrack(r);
     const { track } = this;
     setTerrain(track, this.seed);
+    track.pads = placePads(track);
     this.trucks.forEach((t, i) => {
       t.score = 0;
       t.finished = false;
@@ -311,6 +313,15 @@ export class Game {
           b.cooldown = BOX_COOLDOWN;
           this.giveItem(t);
         }
+      }
+    }
+
+    // Boost-pads
+    if (this.state === 'racing') {
+      for (const pad of this.track.pads) {
+        if (!onPad(pad, t, this.track.length)) continue;
+        if (t.turbo < PAD_TURBO - 0.3) t.say('BOOST!', 1);
+        t.turbo = Math.max(t.turbo, PAD_TURBO);
       }
     }
 

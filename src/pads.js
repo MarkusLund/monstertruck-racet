@@ -1,0 +1,29 @@
+import { posAt } from './track.js';
+import { groundHeight } from './terrain.js';
+
+// Boost-pads på bakken. Plasseringen avhenger bare av banen (som lages fra frøet),
+// så verten og alle klienter får de samme padsene uten å sende noe over nettet.
+export const PAD_TURBO = 1.4; // sekunder med turbo
+export const PAD_LENGTH = 7; // langs banen
+export const PAD_HALF_WIDTH = 3.4;
+
+// Terrenget må være bygget (setTerrain) før padsene plasseres, så y blir bakkehøyden.
+// Tre pads (to side om side, så én i midten) spredt rundt runden, utenfor ramper og item-bokser.
+export function placePads(track) {
+  const spots = [[0.14, -4.2], [0.14, 4.2], [0.40, 0], [0.64, -4.2], [0.64, 4.2], [0.88, 0]];
+  const pads = [];
+  for (const [f, lat] of spots) {
+    let s = f * track.length;
+    for (const j of track.jumps) if (s > j.s0 - 16 && s < j.s1 + 16) s = j.s1 + 20;
+    const p = posAt(track, s, lat);
+    pads.push({ s, lat, x: p.x, y: groundHeight(p.x, p.z), z: p.z, theta: p.theta });
+  }
+  return pads;
+}
+
+// Ligger trucken på en pad (og ikke høyt over bakken)?
+export function onPad(pad, t, length) {
+  let ds = t.s - pad.s;
+  ds -= Math.round(ds / length) * length;
+  return Math.abs(ds) < PAD_LENGTH / 2 + 1 && Math.abs(t.lat - pad.lat) < PAD_HALF_WIDTH + 0.6 && t.y - groundHeight(t.x, t.z) < 1.5;
+}
