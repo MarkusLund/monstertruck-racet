@@ -8,7 +8,8 @@ const COIN_RADIUS = 2.4;
 const BOX_RADIUS = 3.4;
 const BOX_COOLDOWN = 6;
 const TRUCK_RADIUS = 2.5; // sirkel brukt til kollisjon mellom trucker
-const ROCKET_SPEED = 80;
+const ROCKET_SPEED = 60;
+export const ROCKET_HIT_HEIGHT = 1.2; // er trucken høyere oppe enn dette, flyr raketten under
 const BARRICADE_AHEAD = 60;
 const BARRICADE_LIFE = 14;
 const BARRICADE_HALF_WIDTH = 9.4; // dekker hele asfalten: den som ligger foran må kjøre omveien i gresset
@@ -222,8 +223,15 @@ export class Game {
     this.projectiles = this.projectiles.filter((p) => {
       p.age += DT;
       const target = this.trucks[p.target];
+      if (p.missed) {
+        // Forbi målet (hoppet over): flyr rett fram til den dør.
+        p.x += Math.cos(p.dir) * ROCKET_SPEED * DT;
+        p.z += Math.sin(p.dir) * ROCKET_SPEED * DT;
+        return p.age < 4;
+      }
       const dx = target.x - p.x, dz = target.z - p.z;
       const d = Math.hypot(dx, dz) || 0.001;
+      if (d < 3 && target.y > ROCKET_HIT_HEIGHT) { p.missed = true; return true; }
       if (d < 3 || p.age > 4) {
         if (d < 3) this.hitByRocket(target);
         return false;
@@ -345,7 +353,7 @@ Game.prototype.snapshot = function snapshot() {
     })),
     co: this.coins.map((c) => (c.taken ? 1 : 0)).join(''),
     bx: this.boxes.map((b) => Math.round(b.cooldown * 10) / 10),
-    pr: this.projectiles.map((p) => [p.x, p.z, p.dir, p.target]),
+    pr: this.projectiles.map((p) => [p.x, p.z, p.dir, p.target, p.missed ? 1 : 0]),
     ba: this.barricades.map((b) => [b.s, b.x, b.z, b.theta, b.life]),
   };
 };
@@ -367,6 +375,6 @@ Game.prototype.applySnapshot = function applySnapshot(sn) {
   });
   this.coins.forEach((c, i) => { c.taken = sn.co[i] === '1'; });
   this.boxes.forEach((b, i) => { b.cooldown = sn.bx[i] ?? 0; });
-  this.projectiles = sn.pr.map(([x, z, dir, target]) => ({ x, z, dir, target }));
+  this.projectiles = sn.pr.map(([x, z, dir, target, missed]) => ({ x, z, dir, target, missed: !!missed }));
   this.barricades = sn.ba.map(([s, x, z, theta, life]) => ({ s, x, z, theta, lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life }));
 };

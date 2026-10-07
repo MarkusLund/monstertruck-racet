@@ -200,7 +200,7 @@ function buildViews(views) {
       <div class="card"><div class="pname">Spiller ${ti + 1}</div>
         <div class="score"><span class="coin-icon"></span><span class="score-val" id="score-${ti}">0</span><span class="score-label">mynter</span></div>
         <div class="lap" id="lap-${ti}"></div></div>
-      <div class="wrong" id="wrong-${ti}">Feil vei!</div><div class="fx" id="fx-${ti}"></div>`;
+      <div class="wrong" id="wrong-${ti}">Feil vei!</div><div class="rocket-warn" id="rw-${ti}"></div><div class="fx" id="fx-${ti}"></div>`;
     viewsEl.append(el);
   });
 }
@@ -266,6 +266,20 @@ function updateHud(views = currentViews()) {
     setText($(`score-${i}`), String(t.score));
     setText($(`lap-${i}`), `Runde ${game.lap(t)}/${LAPS}`);
     $(`wrong-${i}`).classList.toggle('show', game.state === 'racing' && t.wrongWay > 1);
+    // Rakett på vei mot denne trucken: varsle, og si fra om den kommer bakfra.
+    let warn = '';
+    if (game.state === 'racing' && t.stun <= 0) {
+      let best = 1e9, behind = false;
+      for (const p of game.projectiles) {
+        if (p.target !== i || p.missed) continue;
+        const d = Math.hypot(p.x - t.x, p.z - t.z);
+        if (d < best) { best = d; behind = (p.x - t.x) * Math.cos(t.theta) + (p.z - t.z) * Math.sin(t.theta) < 0; }
+      }
+      if (best < 110) warn = behind ? 'RAKETT BAKFRA! HOPP!' : 'RAKETT! HOPP!';
+    }
+    const rw = $(`rw-${i}`);
+    setText(rw, warn);
+    rw.classList.toggle('show', !!warn);
     let text = '', cls = '';
     if (game.state === 'racing') {
       if (t.msgTimer > 0) { text = t.msg; cls = t.stun > 0 ? 'stun' : t.turbo > 0 ? 'turbo' : t.shield > 0 ? 'shield' : ''; }
