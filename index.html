@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monstertruck-racet</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="hud">
+      <section class="player p1" data-player="0">
+        <div class="pname">Spiller 1</div>
+        <div class="score"><span class="coin-icon"></span><span class="score-val" id="score-0">0</span><span class="score-label">mynter</span></div>
+        <div class="devices" id="devices-0"></div>
+      </section>
+      <section class="center">
+        <div id="status">Klar?</div>
+        <div id="timer">Tid: 0:00.0</div>
+        <div class="progress" aria-label="Fremdrift">
+          <div class="progress-track"></div>
+          <div class="marker m1" id="marker-0">1</div>
+          <div class="marker m2" id="marker-1">2</div>
+          <div class="goal-flag">MÅL</div>
+        </div>
+      </section>
+      <section class="player p2" data-player="1">
+        <div class="pname">Spiller 2</div>
+        <div class="score"><span class="coin-icon"></span><span class="score-val" id="score-1">0</span><span class="score-label">mynter</span></div>
+        <div class="devices" id="devices-1"></div>
+      </section>
+    </header>
+
+    <main id="stage">
+      <canvas id="game"></canvas>
+
+      <div id="menu" class="overlay">
+        <div class="panel">
+          <h1>MONSTERTRUCK<span>-RACET</span></h1>
+          <p class="tagline">Først til mål vinner! Samle mynter underveis.</p>
+          <div class="controls">
+            <div class="ctl p1">
+              <h2>Spiller 1</h2>
+              <div class="pad-status" id="pad-status-0"></div>
+              <table>
+                <tr><th></th><th>DualSense</th><th>Tastatur</th></tr>
+                <tr><td>Gass</td><td><kbd>R2</kbd></td><td><kbd>D</kbd></td></tr>
+                <tr><td>Revers</td><td><kbd>L2</kbd></td><td><kbd>A</kbd></td></tr>
+                <tr><td>Hopp</td><td><kbd>✕</kbd></td><td><kbd>W</kbd></td></tr>
+              </table>
+            </div>
+            <div class="ctl p2">
+              <h2>Spiller 2</h2>
+              <div class="pad-status" id="pad-status-1"></div>
+              <table>
+                <tr><th></th><th>DualSense</th><th>Tastatur</th></tr>
+                <tr><td>Gass</td><td><kbd>R2</kbd></td><td><kbd>→</kbd></td></tr>
+                <tr><td>Revers</td><td><kbd>L2</kbd></td><td><kbd>←</kbd></td></tr>
+                <tr><td>Hopp</td><td><kbd>✕</kbd></td><td><kbd>↑</kbd></td></tr>
+              </table>
+            </div>
+          </div>
+          <p class="tips">Gass og revers i lufta vipper trucken. Faller du ned i et hull, starter du på nytt før hullet.<br />
+            Tastatur og kontroller kan blandes. Første kontroller er spiller 1, den andre er spiller 2.</p>
+          <p class="start blink">Trykk <kbd>Enter</kbd> / <kbd>Mellomrom</kbd> eller <kbd>✕</kbd> / <kbd>Options</kbd> for å starte</p>
+        </div>
+      </div>
+
+      <div id="results" class="overlay hidden">
+        <div class="panel">
+          <h1 id="winner-text">Spiller 1 vant!</h1>
+          <p id="winner-time"></p>
+          <div class="result-scores">
+            <div class="rs p1"><div>Spiller 1</div><div class="big" id="res-score-0">0</div><div>mynter</div></div>
+            <div class="rs p2"><div>Spiller 2</div><div class="big" id="res-score-1">0</div><div>mynter</div></div>
+          </div>
+          <p class="start blink" id="again">Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen</p>
+          <p class="tips"><kbd>Esc</kbd> for å gå tilbake til startskjermen</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

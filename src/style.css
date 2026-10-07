@@ -1,0 +1,61 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #10131a; color: #fff; overflow: hidden;
+  font-family: "Avenir Next", "Helvetica Neue", system-ui, sans-serif; user-select: none; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* HUD: fixed pixel size, lives outside the game canvas and never scales with the camera. */
+#hud { flex: 0 0 100px; height: 100px; display: grid; grid-template-columns: 1fr minmax(320px, 1.4fr) 1fr;
+  gap: 16px; padding: 10px 20px; background: linear-gradient(#1d2230, #151923); border-bottom: 3px solid #0a0c11; }
+.player { display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+.player.p2 { align-items: flex-end; text-align: right; }
+.pname { font-weight: 900; font-size: 18px; letter-spacing: 1px; text-transform: uppercase; }
+.p1 .pname, .p1 h2, .rs.p1 { color: #ff6a50; }
+.p2 .pname, .p2 h2, .rs.p2 { color: #5aa2ff; }
+.score { display: flex; align-items: center; gap: 8px; }
+.score-val { font-size: 30px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.p2 .score { flex-direction: row-reverse; }
+.score-label { font-size: 13px; opacity: .7; }
+.coin-icon { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(#ffe066 40%, #f5b800 42%); border: 2px solid #a86f00; }
+.devices { font-size: 12px; opacity: .75; }
+.center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+#status { font-size: 22px; font-weight: 900; letter-spacing: 1px; min-height: 26px; }
+#status.big { color: #ffd400; }
+#timer { font-size: 13px; opacity: .8; font-variant-numeric: tabular-nums; }
+.progress { position: relative; width: 100%; height: 20px; margin-top: 2px; }
+.progress-track { position: absolute; left: 0; right: 34px; top: 8px; height: 4px; background: #3a4152; border-radius: 2px; }
+.goal-flag { position: absolute; right: 0; top: 2px; font-size: 11px; font-weight: 900; color: #ffd400; }
+.marker { position: absolute; top: 0; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%;
+  font-size: 11px; font-weight: 900; display: grid; place-items: center; border: 2px solid #fff; }
+.marker.m1 { background: #e8412c; }
+.marker.m2 { background: #2f7fe8; }
+
+#stage { position: relative; flex: 1 1 auto; min-height: 0; }
+#game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 16, .72); backdrop-filter: blur(3px); }
+.overlay.hidden { display: none; }
+.panel { background: #1b2030; border: 3px solid #0a0c11; border-radius: 18px; padding: 28px 40px; text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5); max-width: 900px; }
+h1 { margin: 0 0 6px; font-size: 52px; font-weight: 900; letter-spacing: 2px; color: #ffd400;
+  text-shadow: 0 4px 0 #a86f00; }
+h1 span { color: #fff; text-shadow: 0 4px 0 #555; }
+.tagline { margin: 0 0 18px; font-size: 18px; opacity: .9; }
+.controls { display: flex; gap: 24px; justify-content: center; }
+.ctl { background: #131722; border-radius: 12px; padding: 14px 22px; min-width: 300px; }
+.ctl h2 { margin: 0 0 4px; font-size: 22px; text-transform: uppercase; }
+.pad-status { font-size: 13px; margin-bottom: 8px; opacity: .85; min-height: 18px; }
+.pad-status.on { color: #7de37d; opacity: 1; }
+table { width: 100%; border-collapse: collapse; }
+th { font-size: 12px; opacity: .6; font-weight: 600; padding: 2px 6px; }
+td { padding: 5px 6px; font-size: 16px; }
+td:first-child { text-align: left; font-weight: 700; }
+kbd { display: inline-block; min-width: 30px; padding: 3px 8px; border-radius: 6px; background: #eef0f5; color: #111;
+  font: 800 14px/1.2 system-ui, sans-serif; box-shadow: 0 3px 0 #9aa0ad; }
+.tips { font-size: 13px; opacity: .7; margin: 16px 0 0; line-height: 1.5; }
+.start { font-size: 18px; font-weight: 800; margin: 18px 0 0; }
+.blink { animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .45; } }
+.result-scores { display: flex; gap: 40px; justify-content: center; margin: 16px 0; }
+.rs { font-weight: 800; }
+.rs .big { font-size: 56px; font-weight: 900; }
+#winner-time { font-size: 18px; opacity: .85; margin: 0; }
