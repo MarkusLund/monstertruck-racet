@@ -9,7 +9,7 @@ const GRIP = 5; // hvor raskt sidefarten dør ut
 const GRAVITY = 28;
 const REVERSE_MAX = 16;
 const BRAKE = 45;
-const JUMP_SPEED = 10;
+const JUMP_SPEED = 14; // topphøyde ≈ 3,5 (var 1,8)
 
 export const COIN_ACCEL = 0.03; // ekstra akselerasjon per mynt
 export const COIN_ACCEL_MAX = 0.6;
