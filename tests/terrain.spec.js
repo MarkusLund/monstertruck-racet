@@ -78,11 +78,11 @@ test('høyde over bakken brukes, ikke absolutt y', async ({ page }) => {
     const { groundHeight } = await import('/src/terrain.js');
     const g = window.__game.game;
     const t = g.trucks[0];
-    // Finn et punkt der bakken er høyt over null og stå der med lav høyde over bakken.
-    const hill = g.track.pts.map((p) => ({ x: p.x + p.nx * 14, z: p.z + p.nz * 14 })).reduce((a, b) => (groundHeight(b.x, b.z) > groundHeight(a.x, a.z) ? b : a));
+    // Finn et punkt der bakken ligger langt fra null (opp eller ned) og stå der med lav høyde over bakken.
+    const hill = g.track.pts.map((p) => ({ x: p.x + p.nx * 14, z: p.z + p.nz * 14 })).reduce((a, b) => (Math.abs(groundHeight(b.x, b.z)) > Math.abs(groundHeight(a.x, a.z)) ? b : a));
     t.x = hill.x; t.z = hill.z; t.y = groundHeight(hill.x, hill.z) + 0.2;
     return { ground: groundHeight(hill.x, hill.z), c: clearance(t) };
   });
-  expect(r.ground).toBeGreaterThan(1.2);
+  expect(Math.abs(r.ground)).toBeGreaterThan(1.2);
   expect(r.c).toBeCloseTo(0.2, 3);
 });

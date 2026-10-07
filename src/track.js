@@ -1,14 +1,14 @@
 // Banen: en lukket bane definert av en Catmull-Rom-kurve, resamplet til jevnt fordelte punkter.
 // Koordinater er (x, z) i three.js-verdenen sett ovenfra. Sidelengs forskyvning ("lat") er positiv mot høyre.
 
-export const HALF_WIDTH = 9; // halve veibredden
+export const HALF_WIDTH = 11; // halve veibredden
 export const WALL_LAT = HALF_WIDTH + 6; // avstand fra midtlinjen til barrieren
 export const SPACING = 2; // avstand mellom banepunktene
 
 const CONTROL = [
   [0, 0], [60, -5], [120, -10], [170, 20], [185, 75], [150, 120], [95, 125], [60, 95],
   [20, 110], [-30, 140], [-85, 130], [-110, 85], [-90, 40], [-50, 25], [-28, 8],
-];
+].map(([x, z]) => [x * 1.7, z * 1.7]); // reservebane, skalert opp til samme størrelse som de tilfeldige
 
 function catmull(p0, p1, p2, p3, t) {
   const t2 = t * t, t3 = t2 * t;
@@ -71,7 +71,7 @@ function finish(raw) {
 // Tilfeldig kontrollpunktsett: en uregelmessig, strukket ring med varierende radius.
 function randomControl(rand) {
   const n = 9 + Math.floor(rand() * 4);
-  const base = 95 + rand() * 45;
+  const base = 175 + rand() * 75;
   const sx = 1 + rand() * 0.5, sz = 0.8 + rand() * 0.3;
   const flip = rand() < 0.5 ? 1 : -1;
   const pts = [];
@@ -85,7 +85,7 @@ function randomControl(rand) {
 
 function valid(track) {
   const { pts, count, length } = track;
-  if (length < 600 || length > 1250) return false;
+  if (length < 1100 || length > 2300) return false;
   const k = curvature(pts);
   if (Math.max(...k) > 1 / 22) return false; // for krappe svinger
   // Ulike deler av banen må ikke ligge for nær hverandre.
@@ -121,7 +121,7 @@ export const RAMP_HEIGHT = 2.8;
 function placeJumps(track, rand) {
   const k = curvature(track.pts);
   const { count } = track;
-  const want = 2 + Math.floor(rand() * 3);
+  const want = 3 + Math.floor(rand() * 3);
   const cand = [];
   for (let i = 40; i < count - 25; i++) {
     let m = 0;
@@ -160,7 +160,7 @@ export function heightAt(track, s, lat) {
 
 // Rader med item-bokser (tre og tre) som ikke ligger på ramper.
 export function placeItemBoxes(track) {
-  const rows = 4;
+  const rows = Math.max(4, Math.round(track.length / 300));
   const boxes = [];
   for (let r = 0; r < rows; r++) {
     let s = ((r + 0.5) / rows) * track.length;
@@ -208,7 +208,7 @@ export function nearest(track, x, z, hint = -1, window = 60) {
 // Mynter i grupper langs banen: rette linjer og slalåm.
 export function placeCoins(track, rand = Math.random) {
   const coins = [];
-  const groups = 16;
+  const groups = Math.max(16, Math.round(track.length / 55));
   for (let g = 0; g < groups; g++) {
     const s0 = ((g + 0.2 + 0.6 * rand()) / groups) * track.length;
     if (s0 < 40 || s0 > track.length - 30) continue;

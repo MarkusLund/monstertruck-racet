@@ -1,4 +1,4 @@
-import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS } from './track.js';
+import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS, HALF_WIDTH } from './track.js';
 import { clearance, setTerrain } from './terrain.js';
 import { placePads, onPad, PAD_TURBO } from './pads.js';
 import { Truck, TURBO_TIME, SHIELD_TIME, STUN_TIME } from './truck.js';
@@ -15,7 +15,7 @@ const ROCKET_SPEED = 60;
 export const ROCKET_HIT_HEIGHT = 1.2; // er trucken høyere oppe enn dette, flyr raketten under
 const BARRICADE_AHEAD = 60;
 const BARRICADE_LIFE = 14;
-const BARRICADE_HALF_WIDTH = 9.4; // dekker hele asfalten: den som ligger foran må kjøre omveien i gresset
+export const BARRICADE_HALF_WIDTH = HALF_WIDTH + 0.4; // dekker hele asfalten: den som ligger foran må kjøre omveien i gresset
 export const MAX_PLAYERS = 4;
 const GRID = [{ lat: -3.5, back: 7 }, { lat: 3.5, back: 7 }, { lat: -3.5, back: 15 }, { lat: 3.5, back: 15 }]; // startoppstilling bak streken
 

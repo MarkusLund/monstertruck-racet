@@ -1,4 +1,4 @@
-import { Game, DT, LAPS, MAX_PLAYERS } from './game.js';
+import { Game, DT, LAPS, MAX_PLAYERS, BARRICADE_HALF_WIDTH } from './game.js';
 import { Input } from './input.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
@@ -399,7 +399,7 @@ function updateDebug(now) {
   fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now;
   const g = client.gaps.slice().sort((x, y) => x - y);
   const pc = (p) => (g.length ? g[Math.min(g.length - 1, Math.floor(g.length * p))] : 0).toFixed(0);
-  dbg.textContent = `fps ${fps}  dpr ${window.devicePixelRatio}  canvas ${canvas.width}x${canvas.height}\nsnap-gap p50 ${pc(0.5)} p90 ${pc(0.9)} p99 ${pc(0.99)} ms  buffer ${client.buf.length}  tomt ${client.dry}`;
+  dbg.textContent = `fps ${fps}  dpr ${window.devicePixelRatio}  kvalitet ${(renderer.quality ?? 1).toFixed(2)}  canvas ${canvas.width}x${canvas.height}\nsnap-gap p50 ${pc(0.5)} p90 ${pc(0.9)} p99 ${pc(0.99)} ms  buffer ${client.buf.length}  tomt ${client.dry}`;
 }
 
 let acc = 0, last = performance.now(), clock = 0;
@@ -416,6 +416,7 @@ function frame(now) {
     if (n === 6) acc = 0;
   }
   const views = currentViews();
+  if (!manual) renderer.adaptQuality(now);
   renderer.draw(game, dt, clock, views);
   updateHud(views);
   updateEngine();
@@ -477,7 +478,7 @@ window.__game = {
   },
   addBarricade(s) {
     const p = game.track.pts[Math.round(s / 2) % game.track.count];
-    game.barricades.push({ s, x: p.x, z: p.z, theta: Math.atan2(p.tz, p.tx), lat: 0, halfWidth: 9.4, life: 14, hit: false });
+    game.barricades.push({ s, x: p.x, z: p.z, theta: Math.atan2(p.tz, p.tx), lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life: 14, hit: false });
   },
   addCoin(i, s, lat = 0) {
     const p = game.track.pts[Math.round(s / 2) % game.track.count];

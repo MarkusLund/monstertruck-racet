@@ -238,7 +238,7 @@ test.describe('Spillmekanikk', () => {
     await open(page);
     await startRace(page);
     await teleport(page, 0, 40, 0);
-    await teleport(page, 1, 40, 11); // utenfor asfalten, men innenfor barrieren
+    await teleport(page, 1, 40, 14); // utenfor asfalten, men innenfor barrieren
     await page.keyboard.down('w');
     await page.keyboard.down('ArrowUp');
     await advance(page, 0.1);

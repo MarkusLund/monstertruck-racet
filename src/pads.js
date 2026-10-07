@@ -8,9 +8,15 @@ export const PAD_LENGTH = 7; // langs banen
 export const PAD_HALF_WIDTH = 3.4;
 
 // Terrenget må være bygget (setTerrain) før padsene plasseres, så y blir bakkehøyden.
-// Tre pads (to side om side, så én i midten) spredt rundt runden, utenfor ramper og item-bokser.
+// Pads (to side om side, så én i midten) spredt rundt runden, utenfor ramper og item-bokser.
 export function placePads(track) {
-  const spots = [[0.14, -4.2], [0.14, 4.2], [0.40, 0], [0.64, -4.2], [0.64, 4.2], [0.88, 0]];
+  // Én gruppe like etter hver rad med item-bokser (samme antall som radene): et par side om side, så én i midten.
+  const groups = Math.max(4, Math.round(track.length / 300));
+  const spots = [];
+  for (let g = 0; g < groups; g++) {
+    const f = (g + 0.56) / groups;
+    if (g % 2) spots.push([f, 0]); else spots.push([f, -4.2], [f, 4.2]);
+  }
   const pads = [];
   for (const [f, lat] of spots) {
     let s = f * track.length;

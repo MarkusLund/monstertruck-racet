@@ -204,7 +204,7 @@ test.describe('Power-ups', () => {
     await open(page);
     await startRace(page);
     const length = await L(page);
-    await teleport(page, 0, length - 40, 12, -1);
+    await teleport(page, 0, length - 40, 14, -1);
     await page.evaluate((len) => { window.__game.teleport(1, 200, 0, 0); window.__game.addBarricade(len - 20); }, length);
     await page.keyboard.down('w');
     await advance(page, 4);
