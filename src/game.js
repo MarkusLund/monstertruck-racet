@@ -12,23 +12,49 @@ const ROCKET_SPEED = 80;
 const BARRICADE_AHEAD = 60;
 const BARRICADE_LIFE = 14;
 const BARRICADE_HALF_WIDTH = 9.4; // dekker hele asfalten: den som ligger foran må kjøre omveien i gresset
-const GRID = [{ lat: -3.5, back: 7 }, { lat: 3.5, back: 7 }]; // startoppstilling bak streken
+export const MAX_PLAYERS = 4;
+const GRID = [{ lat: -3.5, back: 7 }, { lat: 3.5, back: 7 }, { lat: -3.5, back: 15 }, { lat: 3.5, back: 15 }]; // startoppstilling bak streken
 
 const wrapDiff = (d, length) => d - Math.round(d / length) * length;
 
+export function mulberry(seed) {
+  let a = seed;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Felt som sendes til tilskuere/fjernspillere hver gang verten sender et øyeblikksbilde.
+export const TRUCK_FIELDS =['x', 'y', 'z', 'theta', 'vx', 'vz', 'vy', 'roll', 'wheelSpin', 'air', 'rampVy', 'onRoad', 'lat', 's', 'dist',
+  'wrongWay', 'turbo', 'shield', 'stun', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
+
 // Spilltilstander: 'menu' -> 'countdown' -> 'racing' -> 'finished'
 export class Game {
-  constructor(rand = Math.random) {
+  constructor(rand = Math.random, players = 2) {
     this.rand = rand;
-    this.trucks = [new Truck(0), new Truck(1)];
+    this.trucks = [];
+    this.setPlayers(players);
     this.state = 'menu';
     this.events = [];
-    this.newRace(true);
+    this.newRace();
+  }
+
+  // Antall trucker (2–4). Kalles før et løp starter.
+  setPlayers(n) {
+    n = Math.max(1, Math.min(MAX_PLAYERS, n));
+    if (this.trucks.length === n) return;
+    this.trucks = Array.from({ length: n }, (_, i) => new Truck(i));
   }
 
   // Ny bane hver gang et løp starter (og for forhåndsvisningen på startskjermen).
-  newRace(newTrack = false) {
-    if (newTrack || !this.track) this.track = buildTrack(this.rand);
+  // Banen og myntene lages fra et frø, så fjernspillere kan bygge nøyaktig samme bane.
+  newRace(seed = null) {
+    this.seed = seed ?? Math.floor(this.rand() * 2 ** 31);
+    const r = mulberry(this.seed);
+    this.track = buildTrack(r);
     const { track } = this;
     this.trucks.forEach((t, i) => {
       t.score = 0;
@@ -36,7 +62,7 @@ export class Game {
       t.lapsDone = 0;
       t.place(track, track.length - GRID[i].back, GRID[i].lat, -GRID[i].back);
     });
-    this.coins = placeCoins(track, this.rand);
+    this.coins = placeCoins(track, r);
     this.boxes = placeItemBoxes(track);
     this.projectiles = [];
     this.barricades = [];
@@ -47,14 +73,15 @@ export class Game {
     this.coinLap = 0;
   }
 
-  start() {
-    this.newRace(true);
+  start(players = this.trucks.length, seed = null) {
+    this.setPlayers(players);
+    this.newRace(seed);
     this.state = 'countdown';
     this.stateTime = 0;
   }
 
   toMenu() {
-    this.newRace(true);
+    this.newRace();
     this.state = 'menu';
   }
 
@@ -67,10 +94,15 @@ export class Game {
     return Math.max(0, Math.min(1, t.dist / (this.track.length * LAPS)));
   }
 
-  // 1 for lederen, 2 for den bakerste.
+  // 1 for lederen, ... N for den bakerste. Ved uavgjort teller lavest id først.
+  order() {
+    return [...this.trucks].sort((a, b) => b.dist - a.dist || a.id - b.id);
+  }
+
   place(t) {
-    const other = this.trucks[1 - t.id];
-    return t.dist >= other.dist ? 1 : 2;
+    let p = 1;
+    for (const o of this.trucks) if (o !== t && (o.dist > t.dist || (o.dist === t.dist && o.id < t.id))) p++;
+    return p;
   }
 
   step(inputs) {
@@ -101,36 +133,43 @@ export class Game {
     for (const b of this.boxes) b.cooldown = Math.max(0, b.cooldown - DT);
   }
 
-  // Slipstream (kjører tett bak den andre) og strikk-effekt (den som ligger langt bak får litt hjelp).
+  // Slipstream (kjører tett bak en annen) og strikk-effekt (den som ligger langt bak får litt hjelp).
   updateAssists() {
     const { length } = this.track;
+    const leadDist = Math.max(...this.trucks.map((q) => q.dist));
     for (const t of this.trucks) {
-      const o = this.trucks[1 - t.id];
-      const ahead = wrapDiff(o.s - t.s, length);
-      const inTow = ahead > 3 && ahead < 26 && Math.abs(o.lat - t.lat) < 4.5 && o.speed > 12 && t.speed > 8 && !t.air && !t.finished;
+      const inTow = !t.air && !t.finished && t.speed > 8 && this.trucks.some((o) => {
+        if (o === t) return false;
+        const ahead = wrapDiff(o.s - t.s, length);
+        return ahead > 3 && ahead < 26 && Math.abs(o.lat - t.lat) < 4.5 && o.speed > 12;
+      });
       t.draft = inTow ? Math.min(1, t.draft + DT / 0.7) : Math.max(0, t.draft - DT / 0.4);
-      const gap = o.dist - t.dist;
+      const gap = leadDist - t.dist;
       t.catchup = this.state === 'racing' ? Math.max(0, Math.min(1, (gap - 25) / 120)) : 0;
     }
   }
 
   // Trucker som kjører inn i hverandre dytter og spretter. Hopper man over den andre (høydeforskjell) går man klar.
   collideTrucks() {
-    const [a, b] = this.trucks;
-    const dx = b.x - a.x, dz = b.z - a.z;
-    const d = Math.hypot(dx, dz) || 0.001;
     const min = TRUCK_RADIUS * 2;
-    if (d >= min || Math.abs(a.y - b.y) > 1.8) return;
-    const nx = dx / d, nz = dz / d;
-    const push = (min - d) / 2;
-    a.x -= nx * push; a.z -= nz * push;
-    b.x += nx * push; b.z += nz * push;
-    const rel = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
-    if (rel < 0) {
-      const j = (-(1 + 0.5) * rel) / 2;
-      a.vx -= nx * j; a.vz -= nz * j;
-      b.vx += nx * j; b.vz += nz * j;
-      if (-rel > 5) this.emit({ type: 'bump', truck: a.id });
+    for (let i = 0; i < this.trucks.length; i++) {
+      for (let k = i + 1; k < this.trucks.length; k++) {
+        const a = this.trucks[i], b = this.trucks[k];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const d = Math.hypot(dx, dz) || 0.001;
+        if (d >= min || Math.abs(a.y - b.y) > 1.8) continue;
+        const nx = dx / d, nz = dz / d;
+        const push = (min - d) / 2;
+        a.x -= nx * push; a.z -= nz * push;
+        b.x += nx * push; b.z += nz * push;
+        const rel = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz;
+        if (rel < 0) {
+          const j = (-(1 + 0.5) * rel) / 2;
+          a.vx -= nx * j; a.vz -= nz * j;
+          b.vx += nx * j; b.vz += nz * j;
+          if (-rel > 5) this.emit({ type: 'bump', truck: a.id });
+        }
+      }
     }
   }
 
@@ -197,8 +236,11 @@ export class Game {
 
   // Delte ut et tilfeldig power-up. Den som ligger bak får bedre (og mer skadelige) ting enn lederen.
   giveItem(t) {
-    const other = this.trucks[1 - t.id];
-    const pool = this.place(t) === 1 ? ['turbo', 'shield'] : ['turbo', 'rocket', 'barricade'];
+    const order = this.order();
+    const place = order.indexOf(t) + 1;
+    const leader = order[0];
+    const ahead = order[Math.max(0, place - 2)]; // trucken rett foran (rakettmålet)
+    const pool = place === 1 ? ['turbo', 'shield'] : ['turbo', 'rocket', 'barricade'];
     const item = pool[Math.floor(this.rand() * pool.length)];
     if (item === 'turbo') {
       t.turbo = TURBO_TIME;
@@ -207,10 +249,10 @@ export class Game {
       t.shield = SHIELD_TIME;
       t.say('Skjold!');
     } else if (item === 'rocket') {
-      this.projectiles.push({ x: t.x, z: t.z, owner: t.id, target: other.id, age: 0, dir: t.theta });
+      this.projectiles.push({ x: t.x, z: t.z, owner: t.id, target: ahead.id, age: 0, dir: t.theta });
       t.say('Rakett!');
     } else {
-      let s = other.s + BARRICADE_AHEAD;
+      let s = leader.s + BARRICADE_AHEAD;
       for (const j of this.track.jumps) {
         const w = ((s % this.track.length) + this.track.length) % this.track.length;
         if (w > j.s0 - 6 && w < j.s1 + 12) s = j.s1 + 14;
@@ -218,7 +260,7 @@ export class Game {
       const p = posAt(this.track, s, 0);
       this.barricades.push({ s: wrapS(this.track, s), x: p.x, z: p.z, theta: p.theta, lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life: BARRICADE_LIFE, hit: false });
       t.say('Veisperre lagt ut!');
-      other.say('Veisperre foran!', 2.4);
+      leader.say('Veisperre foran!', 2.4);
     }
     this.emit({ type: 'item', truck: t.id, item });
   }
@@ -273,3 +315,46 @@ export class Game {
     }
   }
 }
+
+// Host/klient-synk: verten sender et kompakt øyeblikksbilde, klienten legger det oppå sin lokale Game.
+Game.prototype.snapshot = function snapshot() {
+  return {
+    seed: this.seed,
+    st: this.state,
+    n: this.trucks.length,
+    cd: this.countdown,
+    tm: this.time,
+    w: this.winner,
+    ft: this.finishTime,
+    cl: this.coinLap,
+    tr: this.trucks.map((t) => TRUCK_FIELDS.map((f) => {
+      const v = t[f];
+      return typeof v === 'number' ? Math.round(v * 1000) / 1000 : v;
+    })),
+    co: this.coins.map((c) => (c.taken ? 1 : 0)).join(''),
+    bx: this.boxes.map((b) => Math.round(b.cooldown * 10) / 10),
+    pr: this.projectiles.map((p) => [p.x, p.z, p.dir, p.target]),
+    ba: this.barricades.map((b) => [b.s, b.x, b.z, b.theta, b.life]),
+  };
+};
+
+Game.prototype.applySnapshot = function applySnapshot(sn) {
+  if (sn.seed !== this.seed || sn.n !== this.trucks.length) {
+    this.setPlayers(sn.n);
+    this.newRace(sn.seed);
+  }
+  this.state = sn.st;
+  this.countdown = sn.cd;
+  this.time = sn.tm;
+  this.winner = sn.w;
+  this.finishTime = sn.ft;
+  this.coinLap = sn.cl;
+  sn.tr.forEach((vals, i) => {
+    const t = this.trucks[i];
+    TRUCK_FIELDS.forEach((f, k) => { t[f] = vals[k]; });
+  });
+  this.coins.forEach((c, i) => { c.taken = sn.co[i] === '1'; });
+  this.boxes.forEach((b, i) => { b.cooldown = sn.bx[i] ?? 0; });
+  this.projectiles = sn.pr.map(([x, z, dir, target]) => ({ x, z, dir, target }));
+  this.barricades = sn.ba.map(([s, x, z, theta, life]) => ({ s, x, z, theta, lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life }));
+};

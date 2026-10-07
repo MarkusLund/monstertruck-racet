@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "2D monstertruck-racing for to spillere (DualSense + tastatur)",
+  "description": "3D monstertruck-racing for 1–4 spillere (tastatur, DualSense, flere Mac-er via nettleser)",
   "scripts": {
     "start": "vite --open",
+    "host": "vite --open",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --open",
@@ -16,6 +17,7 @@
     "vite": "^8.3.0"
   },
   "dependencies": {
-    "three": "^0.186.1"
+    "three": "^0.186.1",
+    "ws": "^8.22.0"
   }
 }

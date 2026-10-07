@@ -1,42 +1,38 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: #10131a; color: #fff; overflow: hidden;
-  font-family: "Avenir Next", "Helvetica Neue", system-ui, sans-serif; user-select: none; }
-#app { display: flex; flex-direction: column; height: 100vh; }
+  font-family: "Avenir Next", "Helvetica Neue", system-ui, sans-serif; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; overscroll-behavior: none; }
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 
-/* HUD: fixed pixel size, lives outside the game canvas and never scales with the camera. */
-#hud { flex: 0 0 128px; height: 128px; display: grid; grid-template-columns: 1fr minmax(320px, 1.4fr) 1fr;
-  gap: 16px; padding: 10px 20px; background: linear-gradient(#1d2230, #151923); border-bottom: 3px solid #0a0c11; }
-.player { display: flex; flex-direction: column; justify-content: center; gap: 2px; }
-.player.p2 { align-items: flex-end; text-align: right; }
-.pname { font-weight: 900; font-size: 18px; letter-spacing: 1px; text-transform: uppercase; }
-.p1 .pname, .p1 h2, .rs.p1 { color: #ff6a50; }
-.p2 .pname, .p2 h2, .rs.p2 { color: #5aa2ff; }
-.score { display: flex; align-items: center; gap: 8px; }
-.score-val { font-size: 30px; font-weight: 900; font-variant-numeric: tabular-nums; }
-.p2 .score { flex-direction: row-reverse; }
-.score-label { font-size: 13px; opacity: .7; }
-.coin-icon { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(#ffe066 40%, #f5b800 42%); border: 2px solid #a86f00; }
-.devices { font-size: 12px; opacity: .75; }
-.center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
-#status { font-size: 22px; font-weight: 900; letter-spacing: 1px; min-height: 26px; }
-#status.big { color: #ffd400; }
-#timer { font-size: 13px; opacity: .8; font-variant-numeric: tabular-nums; }
-.lap { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+/* Spillfarger: rød, blå, grønn, gul. */
+:root { --c0: #ff6a50; --c1: #5aa2ff; --c2: #4fd36a; --c3: #ffc83a; }
+.c0 { --c: var(--c0); } .c1 { --c: var(--c1); } .c2 { --c: var(--c2); } .c3 { --c: var(--c3); }
+
+/* Toppfelt: status, tid og hvordan andre kan bli med. Fast pikselstørrelse, ligger utenfor lerretet. */
+#hud { flex: 0 0 52px; height: 52px; display: flex; align-items: center; justify-content: center; gap: 28px; padding: 0 20px;
+  background: linear-gradient(#1d2230, #151923); border-bottom: 3px solid #0a0c11; white-space: nowrap; overflow: hidden; }
+#status { font-size: 20px; font-weight: 900; letter-spacing: 1px; }
+#timer { font-size: 14px; opacity: .8; font-variant-numeric: tabular-nums; }
+#joininfo { font-size: 13px; opacity: .85; overflow: hidden; text-overflow: ellipsis; }
+#joininfo b { color: #ffd400; }
+body.client #hud { display: none; }
 
 #stage { position: relative; flex: 1 1 auto; min-height: 0; }
 #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
-.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 16, .72); backdrop-filter: blur(3px); }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 16, .72); backdrop-filter: blur(3px); overflow: auto; }
 .overlay.hidden { display: none; }
-.panel { background: #1b2030; border: 3px solid #0a0c11; border-radius: 18px; padding: 28px 40px; text-align: center;
-  box-shadow: 0 20px 60px rgba(0,0,0,.5); max-width: 900px; }
+.panel { background: #1b2030; border: 3px solid #0a0c11; border-radius: 18px; padding: 24px 36px; text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5); max-width: 900px; margin: 8px; }
 h1 { margin: 0 0 6px; font-size: 52px; font-weight: 900; letter-spacing: 2px; color: #ffd400;
   text-shadow: 0 4px 0 #a86f00; }
 h1 span { color: #fff; text-shadow: 0 4px 0 #555; }
-.tagline { margin: 0 0 18px; font-size: 18px; opacity: .9; }
+.tagline { margin: 0 0 14px; font-size: 18px; opacity: .9; }
 .controls { display: flex; gap: 24px; justify-content: center; }
-.ctl { background: #131722; border-radius: 12px; padding: 14px 22px; min-width: 300px; }
-.ctl h2 { margin: 0 0 4px; font-size: 22px; text-transform: uppercase; }
+.ctl { background: #131722; border-radius: 12px; padding: 12px 22px; min-width: 300px; }
+.ctl.off { opacity: .35; }
+.ctl h2 { margin: 0 0 4px; font-size: 22px; text-transform: uppercase; color: var(--c); }
+.ctl.p1 { --c: var(--c0); } .ctl.p2 { --c: var(--c1); }
 .pad-status { font-size: 13px; margin-bottom: 8px; opacity: .85; min-height: 18px; }
 .pad-status.on { color: #7de37d; opacity: 1; }
 table { width: 100%; border-collapse: collapse; }
@@ -45,26 +41,48 @@ td { padding: 5px 6px; font-size: 16px; }
 td:first-child { text-align: left; font-weight: 700; }
 kbd { display: inline-block; min-width: 30px; padding: 3px 8px; border-radius: 6px; background: #eef0f5; color: #111;
   font: 800 14px/1.2 system-ui, sans-serif; box-shadow: 0 3px 0 #9aa0ad; }
-.tips { font-size: 13px; opacity: .7; margin: 16px 0 0; line-height: 1.5; }
-.start { font-size: 18px; font-weight: 800; margin: 18px 0 0; }
+.tips { font-size: 13px; opacity: .7; margin: 14px 0 0; line-height: 1.5; }
+.tips b { color: #ffd400; }
+.start { font-size: 18px; font-weight: 800; margin: 16px 0 0; }
 .blink { animation: blink 1.2s ease-in-out infinite; }
 @keyframes blink { 50% { opacity: .45; } }
-.result-scores { display: flex; gap: 40px; justify-content: center; margin: 16px 0; }
-.rs { font-weight: 800; }
-.rs .big { font-size: 56px; font-weight: 900; }
+
+/* Lobby: hvem som er med, og hvordan andre blir med. */
+.lobby { margin: 14px auto 0; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.slots { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.slot { min-width: 150px; padding: 8px 12px; border-radius: 10px; background: #131722; border-left: 6px solid var(--c); text-align: left; }
+.slot.empty { opacity: .4; border-left-color: #555; }
+.slot b { display: block; font-size: 15px; color: var(--c); text-transform: uppercase; }
+.slot span { font-size: 12px; opacity: .8; }
+.joinurls { font-size: 15px; line-height: 1.6; }
+.joinurls b { color: #ffd400; font-size: 18px; user-select: all; -webkit-user-select: all; }
+.client-you { font-size: 22px; font-weight: 900; color: var(--c); margin: 6px 0 0; }
+
+.result-scores { display: flex; gap: 22px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
+.rs { font-weight: 800; color: var(--c); min-width: 110px; }
+.rs .pl { font-size: 20px; }
+.rs .big { font-size: 48px; font-weight: 900; line-height: 1.1; }
 #winner-time { font-size: 18px; opacity: .85; margin: 0; }
 
-/* Plassering og "feil vei" ligger over hver halvdel av delt skjerm. */
-.vp { position: absolute; top: 0; bottom: 0; width: calc(50% - 2px); pointer-events: none; }
-.vp0 { left: 0; } .vp1 { right: 0; }
-#stage.menu .vp, #stage.finished .vp { display: none; }
-.pos { position: absolute; top: 14px; left: 18px; font-size: 64px; font-weight: 900; line-height: 1; color: #fff;
+/* Hver spillerskjerm har egen plassering, runde og effekt-tekst. */
+#views { position: absolute; inset: 0; pointer-events: none; }
+.vp { position: absolute; }
+#stage.menu #views, #stage.finished #views { display: none; }
+.vp .pos { position: absolute; top: 12px; left: 16px; font-size: 56px; font-weight: 900; line-height: 1; color: var(--c);
   -webkit-text-stroke: 3px #10131a; paint-order: stroke fill; text-shadow: 0 4px 0 rgba(0,0,0,.35); }
-.vp0 .pos { color: #ff8a6b; } .vp1 .pos { color: #8ec1ff; }
-.wrong { position: absolute; left: 0; right: 0; top: 38%; text-align: center; font-size: 40px; font-weight: 900; color: #ffd400;
+.vp .card { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  padding: 6px 12px; border-radius: 10px; background: rgba(16, 19, 26, .62); border-right: 5px solid var(--c); }
+.vp .pname { font-weight: 900; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--c); }
+.vp .score { display: flex; align-items: center; gap: 6px; }
+.vp .score-val { font-size: 22px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.vp .lap { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.coin-icon { width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(#ffe066 40%, #f5b800 42%); border: 2px solid #a86f00; }
+.wrong { position: absolute; left: 0; right: 0; top: 38%; text-align: center; font-size: 36px; font-weight: 900; color: #ffd400;
   -webkit-text-stroke: 2px #10131a; paint-order: stroke fill; display: none; }
 .wrong.show { display: block; animation: blink .6s ease-in-out infinite; }
-.fx { position: absolute; left: 0; right: 0; bottom: 36px; text-align: center; font-size: 30px; font-weight: 900; color: #fff;
+.fx { position: absolute; left: 0; right: 0; bottom: 28px; text-align: center; font-size: 28px; font-weight: 900; color: #fff;
   -webkit-text-stroke: 2px #10131a; paint-order: stroke fill; text-shadow: 0 3px 0 rgba(0,0,0,.35); min-height: 34px; }
 .fx.turbo { color: #ffb02e; } .fx.shield { color: #7fd4ff; } .fx.stun { color: #ff5a4a; } .fx.draft { color: #d8f3ff; }
-.tips b { color: #ffd400; }
+
+body.client .vp .pos { font-size: 44px; }
+body.client .wrong { font-size: 28px; top: 28%; }

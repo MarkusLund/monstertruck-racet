@@ -21,8 +21,20 @@ export async function mockGamepads(page) {
   });
 }
 
-export async function open(page, { manual = true } = {}) {
-  await page.goto(manual ? '/?manual=1' : '/');
+// Math.random erstattes med en seedet generator, så banene (og dermed fysikktestene) blir de samme hver gang.
+export const TEST_SEED = Number(process.env.TEST_SEED || 7);
+
+export async function open(page, { manual = true, seed = TEST_SEED, query = '' } = {}) {
+  await page.addInitScript((seed) => {
+    let a = seed;
+    Math.random = () => {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }, seed);
+  await page.goto(query ? (manual ? `/?manual=1&${query}` : `/?${query}`) : manual ? '/?manual=1' : '/');
   await page.waitForFunction(() => !!window.__game);
 }
 

@@ -27,7 +27,7 @@ test.describe('Slipstream og strikk', () => {
     expect(s.trucks[1].draft).toBeGreaterThan(0.5);
     expect(s.trucks[0].draft).toBe(0);
     await expect(page.locator('#fx-1')).toHaveText('Slipstream');
-    await advance(page, 2);
+    await advance(page, 0.9); // kort, så ingen rekker å kjøre i veggen i en sving
     const t = await state(page);
     expect(t.trucks[1].speed).toBeGreaterThan(t.trucks[0].speed + 1);
   });

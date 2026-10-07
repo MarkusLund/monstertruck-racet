@@ -6,7 +6,16 @@ import { Countdown3D } from './countdown.js';
 export const PLAYER_COLORS = [
   { body: 0xe8412c, dark: 0xa82513 },
   { body: 0x2f7fe8, dark: 0x1a4fa8 },
+  { body: 0x2fb84a, dark: 0x1b7a2e },
+  { body: 0xf2b21a, dark: 0xb07a00 },
 ];
+
+// Plassering av spillerskjermene (brøkdeler av lerretet). 1 = full skjerm, 2 = side ved side, 3–4 = rutenett.
+export function layoutViews(n) {
+  if (n <= 1) return [{ x: 0, y: 0, w: 1, h: 1 }];
+  if (n === 2) return [{ x: 0, y: 0, w: 0.5, h: 1 }, { x: 0.5, y: 0, w: 0.5, h: 1 }];
+  return [{ x: 0, y: 0, w: 0.5, h: 0.5 }, { x: 0.5, y: 0, w: 0.5, h: 0.5 }, { x: 0, y: 0.5, w: 0.5, h: 0.5 }, { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }];
+}
 
 // Kamera sett skrått ovenfra, bak trucken (som SNES Mario Kart, men brattere).
 const CAM_BACK = 11;
@@ -252,8 +261,8 @@ export class Renderer {
     this.renderer.info.autoReset = false;
     this.scene.background = skyTexture();
     this.scene.fog = new THREE.Fog(0xcfe8f7, 140, 420);
-    this.cameras = [0, 1].map(() => new THREE.PerspectiveCamera(60, 1, 0.5, 600));
-    this.camAngle = [0, 0];
+    this.cameras = [0, 1, 2, 3].map(() => new THREE.PerspectiveCamera(60, 1, 0.5, 600));
+    this.camAngle = [0, 0, 0, 0];
     this.camReady = false;
     this.trucks = [];
     this.coinMeshes = [];
@@ -577,7 +586,7 @@ export class Renderer {
   }
 
   resize(cssW, cssH) {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(cssW, cssH, false);
     this.size = { w: cssW, h: cssH };
@@ -596,13 +605,15 @@ export class Renderer {
     cam.fov = 58 + frac * 10;
   }
 
-  draw(game, dt, time) {
+  // views: hvilke trucker som får en egen skjerm (standard: alle). En fjernspiller viser bare sin egen.
+  draw(game, dt, time, views = game.trucks.map((_, i) => i)) {
     this.buildActors();
     this.buildWorld(game.track);
     if (this.coinsRef !== game.coins || this.coinMeshes.length !== game.coins.length) this.buildCoins(game.coins);
     const snap = !this.camReady;
     this.camReady = true;
 
+    this.trucks.forEach((m, i) => { m.root.visible = i < game.trucks.length; });
     game.trucks.forEach((t, i) => {
       const m = this.trucks[i];
       m.root.position.set(t.x, t.y, t.z);
@@ -629,21 +640,26 @@ export class Renderer {
     const { renderer } = this;
     const { w, h } = this.size;
     renderer.info.reset(); // statistikken dekker bare de to spillerskjermene, ikke nedtellingen
-    const half = Math.floor((w - 4) / 2);
+    const rects = layoutViews(views.length);
     renderer.setScissorTest(false);
     renderer.clear();
     renderer.setScissorTest(true);
-    for (let i = 0; i < 2; i++) {
-      const x = i === 0 ? 0 : w - half;
-      renderer.setViewport(x, 0, half, h);
-      renderer.setScissor(x, 0, half, h);
-      this.cameras[i].aspect = half / h;
-      this.cameras[i].updateProjectionMatrix();
-      const tr = game.trucks[i];
+    views.forEach((ti, k) => {
+      const r = rects[k];
+      const x = Math.round(r.x * w) + (r.x > 0 ? 2 : 0);
+      const vw = Math.round((r.x + r.w) * w) - x - (r.x + r.w < 1 ? 2 : 0);
+      const vh = Math.round(r.h * h) - (r.y > 0 ? 2 : 0) - (r.y + r.h < 1 ? 2 : 0);
+      const y = h - Math.round((r.y + r.h) * h) + (r.y + r.h < 1 ? 2 : 0);
+      renderer.setViewport(x, y, vw, vh);
+      renderer.setScissor(x, y, vw, vh);
+      const cam = this.cameras[ti];
+      cam.aspect = vw / vh;
+      cam.updateProjectionMatrix();
+      const tr = game.trucks[ti];
       this.sun.target.position.set(tr.x, 0, tr.z);
       this.sun.position.set(tr.x - 70, 120, tr.z + 45);
-      renderer.render(this.scene, this.cameras[i]);
-    }
+      renderer.render(this.scene, cam);
+    });
     if (this.countdown.update(game)) this.countdown.render(renderer, w, h);
   }
 }

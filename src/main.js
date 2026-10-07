@@ -1,8 +1,9 @@
-import { Game, DT, LAPS } from './game.js';
+import { Game, DT, LAPS, MAX_PLAYERS } from './game.js';
 import { Input } from './input.js';
-import { Renderer } from './render.js';
+import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
 import { MAX_SPEED } from './truck.js';
+import { Net, lerpSnapshot } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -11,8 +12,21 @@ const game = new Game();
 const renderer = new Renderer(canvas);
 const sound = new Sound();
 
-// ?manual=1 disables real-time stepping so automated tests can advance time deterministically.
-const manual = new URLSearchParams(location.search).has('manual');
+const params = new URLSearchParams(location.search);
+// ?manual=1 slår av sanntidssteg så automatiske tester kan styre tiden selv.
+const manual = params.has('manual');
+const room = params.get('room') || 'main';
+// Maskinen som kjører spillet (localhost) er verten. Alle andre (LAN-adresse eller tunnel) er fjernspillere.
+const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+const role = params.get('role') || (isLocal ? 'host' : 'client');
+const online = !manual || params.has('room');
+document.body.classList.toggle('client', role === 'client');
+
+const COLORS = ['#ff6a50', '#5aa2ff', '#4fd36a', '#ffc83a'];
+const COLOR_NAMES = ['rød', 'blå', 'grønn', 'gul'];
+const IDLE = { throttle: 0, steer: 0 };
+const esc = (x) => String(x).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 function resize() {
   const r = canvas.getBoundingClientRect();
@@ -26,66 +40,228 @@ function fmtTime(t) {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
-let lastInputs = [{ throttle: 0, steer: 0 }, { throttle: 0, steer: 0 }];
+// ---------- Vert: kjører hele spillet, fjernspillere sender bare input ----------
+const host = { localCount: 2, peers: new Map(), slots: [], info: null, evBuf: [], step: 0 };
+
+function lobbySlots() {
+  const slots = [];
+  for (let k = 0; k < host.localCount; k++) slots.push({ kind: 'local', k });
+  for (const p of host.peers.values()) {
+    if (slots.length >= MAX_PLAYERS) break;
+    slots.push({ kind: 'peer', id: p.id });
+  }
+  return slots;
+}
+
+function sendLobby() {
+  if (!net) return;
+  const slots = host.slots.length ? host.slots : lobbySlots();
+  for (const p of host.peers.values()) {
+    const you = slots.findIndex((s) => s.kind === 'peer' && s.id === p.id);
+    net.send({ t: 'lobby', to: p.id, you, n: slots.length, state: game.state });
+  }
+}
+
+function startRace() {
+  host.slots = lobbySlots();
+  game.start(host.slots.length);
+  host.evBuf = [];
+  host.slots.forEach((s, i) => { if (s.kind === 'peer') net?.send({ t: 'assign', to: s.id, slot: i }); });
+  for (const p of host.peers.values()) {
+    if (!host.slots.some((s) => s.kind === 'peer' && s.id === p.id)) net?.send({ t: 'full', to: p.id });
+  }
+}
+
+function goMenu() {
+  game.toMenu();
+  host.slots = [];
+  sendLobby();
+}
+
+function hostMessage(m) {
+  if (m.t === 'peer') {
+    if (m.open) host.peers.set(m.id, { id: m.id, input: IDLE });
+    else host.peers.delete(m.id);
+    if (game.state === 'menu') sendLobby();
+    else if (m.open) net.send({ t: 'lobby', to: m.id, you: -1, n: game.trucks.length, state: game.state });
+  } else if (m.t === 'in') {
+    const p = host.peers.get(m.from);
+    if (p && Number.isFinite(m.th) && Number.isFinite(m.st)) p.input = { throttle: clamp(m.th, 0, 1), steer: clamp(m.st, -1, 1) };
+  }
+}
+
+// ---------- Klient: viser verten sitt spill fra egen truck ----------
+const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '' };
+
+function clientMessage(m) {
+  if (m.t === 'hello') { client.id = m.id; client.status = m.host ? 'lobby' : 'nohost'; }
+  else if (m.t === 'host') client.status = 'lobby';
+  else if (m.t === 'hostgone') { client.status = 'nohost'; client.cur = client.prev = null; }
+  else if (m.t === 'lobby') {
+    client.slot = m.you >= 0 ? m.you : null;
+    client.status = m.state === 'menu' ? 'lobby' : 'spectate';
+    if (m.state === 'menu') client.cur = client.prev = null;
+  } else if (m.t === 'assign') { client.slot = m.slot; client.status = 'playing'; }
+  else if (m.t === 'full') client.status = 'full';
+  else if (m.t === 'snap') {
+    client.prev = client.cur || m.s;
+    client.cur = m.s;
+    client.curTime = performance.now();
+    if (client.slot !== null && client.status !== 'full') client.status = 'playing';
+    for (const e of m.s.ev || []) {
+      if (e.truck === undefined || e.truck === client.slot || e.type === 'finish') sound.play(e.type);
+    }
+  }
+}
+
+let net = null;
+if (online && role === 'host') {
+  net = new Net('host', room, { message: hostMessage });
+  fetch('/api/info').then((r) => r.json()).then((i) => { host.info = i; }).catch(() => {});
+} else if (online) {
+  net = new Net('client', room, {
+    open() { client.status = 'lobby'; },
+    close() { client.status = 'connecting'; },
+    message: clientMessage,
+  });
+}
+
+// ---------- Simulering (vert) ----------
+let lastInputs = [IDLE, IDLE];
 function simStep() {
   input.poll();
   if (input.pressed.size || input.padEdges.size) sound.unlock();
 
   if (game.state === 'menu') {
-    if (input.confirmPressed()) game.start();
+    if (input.pressed.has('KeyP')) { host.localCount = host.localCount === 2 ? 1 : 2; sendLobby(); }
+    if (input.confirmPressed()) startRace();
   } else if (game.state === 'finished') {
-    if (game.stateTime > 1.2 && input.confirmPressed()) game.start();
+    if (game.stateTime > 1.2 && input.confirmPressed()) startRace();
   }
-  if (input.backPressed() && game.state !== 'menu') game.toMenu();
+  if (input.backPressed() && game.state !== 'menu') goMenu();
 
-  lastInputs = [input.player(0), input.player(1)];
+  lastInputs = game.trucks.map((_, i) => {
+    const s = host.slots[i];
+    if (!s) return IDLE;
+    return s.kind === 'local' ? input.player(s.k) : (host.peers.get(s.id)?.input || IDLE);
+  });
   game.step(lastInputs);
   for (const e of game.events) sound.play(e.type);
+  if (host.peers.size) host.evBuf.push(...game.events);
   game.events.length = 0;
+
+  // 30 øyeblikksbilder i sekundet til fjernspillerne.
+  if (net && host.peers.size && game.state !== 'menu' && ++host.step % 2 === 0) {
+    const s = game.snapshot();
+    s.ev = host.evBuf;
+    host.evBuf = [];
+    net.send({ t: 'snap', s });
+  }
 }
 
-let lastHud = '';
-function updateHud() {
-  const statusEl = $('status');
+function clientInput() {
+  // Fjernspilleren har egen Mac: W A D, piltaster eller kontroller virker alle.
+  const a = input.player(0), b = input.player(1);
+  return { th: Math.max(a.throttle, b.throttle), st: clamp(a.steer + b.steer, -1, 1) };
+}
+
+function clientStep(now) {
+  input.poll();
+  if (input.pressed.size || input.padEdges.size) sound.unlock();
+  const inp = clientInput();
+  lastInputs = [{ throttle: inp.th, steer: inp.st }];
+  const key = `${inp.th.toFixed(2)}|${inp.st.toFixed(2)}`;
+  if (net && (key !== client.sent || now - client.sentAt > 100)) {
+    client.sent = key;
+    client.sentAt = now;
+    net.send({ t: 'in', th: inp.th, st: inp.st });
+  }
+  if (client.cur) {
+    const k = (now - client.curTime) / (1000 / 30);
+    game.applySnapshot(lerpSnapshot(client.prev, client.cur, Math.min(1, k)));
+  }
+}
+
+// ---------- HUD ----------
+const viewsEl = $('views');
+let viewsKey = '';
+function buildViews(views) {
+  const rects = layoutViews(views.length);
+  viewsEl.innerHTML = '';
+  views.forEach((ti, k) => {
+    const r = rects[k];
+    const el = document.createElement('div');
+    el.className = `vp vp${ti} c${ti}`;
+    el.style.cssText = `left:${r.x * 100}%;top:${r.y * 100}%;width:${r.w * 100}%;height:${r.h * 100}%`;
+    el.innerHTML = `<div class="pos" id="pos-${ti}"></div>
+      <div class="card"><div class="pname">Spiller ${ti + 1}</div>
+        <div class="score"><span class="coin-icon"></span><span class="score-val" id="score-${ti}">0</span><span class="score-label">mynter</span></div>
+        <div class="lap" id="lap-${ti}"></div></div>
+      <div class="wrong" id="wrong-${ti}">Feil vei!</div><div class="fx" id="fx-${ti}"></div>`;
+    viewsEl.append(el);
+  });
+}
+
+function currentViews() {
+  if (role === 'client') return [clamp(client.slot ?? 0, 0, game.trucks.length - 1)];
+  return game.trucks.map((_, i) => i);
+}
+
+const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+let lastKey = '';
+function updateHud(views = currentViews()) {
+  const playing = role === 'host' || (client.status === 'playing' && !!client.cur);
+  const key = `${views.join()}|${game.trucks.length}|${role}`;
+  if (key !== viewsKey) { viewsKey = key; buildViews(views); }
+
   let status = '';
   if (game.state === 'menu') status = 'Klar?';
   else if (game.state === 'countdown') status = 'Gjør deg klar!';
   else if (game.state === 'racing') status = 'Løp!';
   else status = `Spiller ${game.winner + 1} vant!`;
-  const devices = [0, 1].map((i) => {
-    const pad = input.padInfo(i);
-    return `${pad ? `🎮 ${pad.name}` : '🎮 ingen kontroller'} · ⌨️ ${i === 0 ? 'W A D' : '↑ ← →'}`;
-  });
-  const laps = game.trucks.map((t) => `Runde ${game.lap(t)}/${LAPS}`);
-  const places = game.trucks.map((t) => `${game.place(t)}.`);
-  const key = [status, game.trucks[0].score, game.trucks[1].score, ...devices, ...laps, ...places, game.state].join('|');
-  if (key !== lastHud) {
-    lastHud = key;
-    statusEl.textContent = status;
-    statusEl.classList.toggle('big', false);
+  setText($('status'), status);
+  setText($('timer'), `Tid: ${fmtTime(game.state === 'finished' ? game.finishTime : game.time)}`);
+
+  const showState = playing ? game.state : 'menu';
+  const stageClass = showState;
+  if ($('stage').className !== stageClass) $('stage').className = stageClass;
+  $('menu').classList.toggle('hidden', role !== 'host' || game.state !== 'menu');
+  $('results').classList.toggle('hidden', !(playing && game.state === 'finished'));
+  const clientPanel = role === 'client' && !(playing && game.state !== 'menu');
+  $('client-panel').classList.toggle('hidden', !clientPanel);
+
+  if (role === 'host' && game.state === 'menu') {
     for (const i of [0, 1]) {
-      $(`score-${i}`).textContent = game.trucks[i].score;
-      $(`devices-${i}`).textContent = devices[i];
-      $(`lap-${i}`).textContent = laps[i];
-      $(`pos-${i}`).textContent = places[i];
       const pad = input.padInfo(i);
       const ps = $(`pad-status-${i}`);
-      ps.textContent = pad ? `✓ ${pad.name} tilkoblet` : 'Ingen kontroller – trykk en knapp på kontrolleren for å koble til';
+      setText(ps, pad ? `✓ ${pad.name} tilkoblet` : 'Ingen kontroller – trykk en knapp på kontrolleren for å koble til');
       ps.classList.toggle('on', !!pad);
     }
-    $('stage').className = game.state;
-    $('menu').classList.toggle('hidden', game.state !== 'menu');
-    $('results').classList.toggle('hidden', game.state !== 'finished');
-    if (game.state === 'finished') {
+    $('ctl-p2').classList.toggle('off', host.localCount < 2);
+    renderLobby();
+  }
+  if (role === 'client') renderClientPanel();
+
+  if (game.state === 'finished' && playing) {
+    const rk = `${game.winner}|${game.seed}`;
+    if (lastKey !== rk) {
+      lastKey = rk;
       $('winner-text').textContent = `Spiller ${game.winner + 1} vant!`;
-      $('winner-text').style.color = game.winner === 0 ? '#ff6a50' : '#5aa2ff';
+      $('winner-text').style.color = COLORS[game.winner];
       $('winner-time').textContent = `Tid: ${fmtTime(game.finishTime)}`;
-      for (const i of [0, 1]) $(`res-score-${i}`).textContent = game.trucks[i].score;
+      $('result-scores').innerHTML = game.order().map((t, i) =>
+        `<div class="rs c${t.id}"><div class="pl">${i + 1}. Spiller ${t.id + 1}</div><div class="big" id="res-score-${t.id}">${t.score}</div><div>mynter</div></div>`).join('');
+      $('again').textContent = role === 'host' ? '' : 'Venter på at verten starter nytt løp …';
+      if (role === 'host') $('again').innerHTML = 'Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen';
     }
   }
-  $('timer').textContent = `Tid: ${fmtTime(game.state === 'finished' ? game.finishTime : game.time)}`;
-  for (const i of [0, 1]) {
+
+  for (const i of views) {
     const t = game.trucks[i];
+    if (!t || !$(`pos-${i}`)) continue;
+    setText($(`pos-${i}`), `${game.place(t)}.`);
+    setText($(`score-${i}`), String(t.score));
+    setText($(`lap-${i}`), `Runde ${game.lap(t)}/${LAPS}`);
     $(`wrong-${i}`).classList.toggle('show', game.state === 'racing' && t.wrongWay > 1);
     let text = '', cls = '';
     if (game.state === 'racing') {
@@ -96,15 +272,63 @@ function updateHud() {
       else if (t.shield > 0) { text = 'Skjold'; cls = 'shield'; }
     }
     const fx = $(`fx-${i}`);
-    if (fx.textContent !== text) fx.textContent = text;
-    fx.className = `fx ${cls}`;
+    setText(fx, text);
+    const fcls = `fx ${cls}`;
+    if (fx.className !== fcls) fx.className = fcls;
   }
 }
 
+// Lobby på startskjermen: hvem som er med og hvordan andre kan bli med.
+let lobbyKey = '';
+function renderLobby() {
+  const slots = lobbySlots();
+  const local = (k) => (k === 0 ? 'Host · W A D / kontroller 1' : 'Host · piltaster / kontroller 2');
+  const cells = Array.from({ length: MAX_PLAYERS }, (_, i) => {
+    const s = slots[i];
+    if (!s) return `<div class="slot empty c${i}"><b>Spiller ${i + 1}</b><span>Ledig</span></div>`;
+    const label = s.kind === 'local' ? local(s.k) : `Fjernspiller #${s.id}`;
+    return `<div class="slot c${i}"><b>Spiller ${i + 1} (${COLOR_NAMES[i]})</b><span>${label}</span></div>`;
+  }).join('');
+  const urls = host.info
+    ? [...host.info.lan, host.info.public].filter(Boolean).map((u) => `<b>${esc(u)}</b>`).join(' &nbsp;·&nbsp; ')
+    : '';
+  const join = !online ? '' : urls
+    ? `Andre blir med ved å åpne: ${urls}`
+    : 'Henter adresser …';
+  const key = cells + join;
+  if (key === lobbyKey) return;
+  lobbyKey = key;
+  $('lobby').innerHTML = `<div class="slots">${cells}</div><div class="joinurls">${join}</div>`;
+  $('joininfo').innerHTML = urls ? `Bli med: ${urls}` : '';
+}
+
+function renderClientPanel() {
+  const msgs = {
+    connecting: 'Kobler til …',
+    nohost: 'Venter på at verten åpner spillet …',
+    lobby: 'Koblet til! Venter på at verten starter løpet …',
+    spectate: 'Et løp pågår. Du blir med i neste løp.',
+    full: 'Løpet er fullt (maks 4 spillere). Du blir med i neste løp hvis det er plass.',
+    playing: 'Venter på data fra verten …',
+  };
+  setText($('client-status'), msgs[client.status] || '');
+  const you = $('client-you');
+  if (client.slot !== null) {
+    setText(you, `Du er spiller ${client.slot + 1} (${COLOR_NAMES[client.slot]})`);
+    you.className = `client-you c${client.slot}`;
+  } else setText(you, '');
+}
+
 function updateEngine() {
+  if (!sound.ctx) return;
   const racing = game.state === 'racing' || game.state === 'countdown';
+  if (role === 'client') {
+    const t = game.trucks[clamp(client.slot ?? 0, 0, game.trucks.length - 1)];
+    sound.engine(Math.min(1, t.speed / MAX_SPEED), lastInputs[0]?.throttle || 0, racing && client.status === 'playing');
+    return;
+  }
   const speed = game.trucks.reduce((a, t) => a + t.speed, 0) / game.trucks.length;
-  const throttle = Math.max(lastInputs[0].throttle, lastInputs[1].throttle);
+  const throttle = Math.max(0, ...lastInputs.map((x) => x.throttle));
   sound.engine(Math.min(1, speed / MAX_SPEED), throttle, racing && game.state !== 'finished');
 }
 
@@ -113,14 +337,17 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   clock += dt;
-  if (!manual) {
+  if (role === 'client') {
+    clientStep(now);
+  } else if (!manual) {
     acc += dt;
     let n = 0;
     while (acc >= DT && n < 6) { simStep(); acc -= DT; n++; }
     if (n === 6) acc = 0;
   }
-  renderer.draw(game, dt, clock);
-  updateHud();
+  const views = currentViews();
+  renderer.draw(game, dt, clock, views);
+  updateHud(views);
   updateEngine();
   requestAnimationFrame(frame);
 }
@@ -129,7 +356,7 @@ updateHud();
 
 // Hooks for automated tests.
 window.__game = {
-  game, input, renderer,
+  game, input, renderer, role, host, client,
   // Som advance, men uten å tegne mellom hvert steg (raskt nok for lange simuleringer).
   simulate(seconds) {
     const n = Math.round(seconds / DT);
@@ -138,7 +365,7 @@ window.__game = {
   advance(seconds) {
     const n = Math.round(seconds / DT);
     for (let i = 0; i < n; i++) simStep();
-    renderer.draw(game, DT, clock);
+    renderer.draw(game, DT, clock, currentViews());
     updateHud();
   },
   state() {
@@ -161,6 +388,7 @@ window.__game = {
       jumps: game.track.jumps,
       pads: [input.padInfo(0), input.padInfo(1)],
       triangles: renderer.renderer.info.render.triangles,
+      net: { role, peers: host.peers.size, slots: host.slots.length, clientStatus: client.status, clientSlot: client.slot, seed: game.seed },
     };
   },
   // Flytter en truck til avstand s langs banen (og sideforskyvning lat). `lap` = antall fullførte runder.

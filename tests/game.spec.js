@@ -368,9 +368,9 @@ test.describe('3D og delt skjerm', () => {
     for (const english of ['Player', 'Score', 'Press', 'Start game', 'Winner', 'Controls', 'Jump', 'Reverse', 'Accelerate', 'Keyboard', 'Lap']) {
       expect(text).not.toContain(english);
     }
-    await expect(page.locator('#hud')).toContainText('Spiller 1');
-    await expect(page.locator('#hud')).toContainText('mynter');
-    await expect(page.locator('#hud')).toContainText('Runde');
+    await expect(page.locator('.vp0')).toContainText('Spiller 1');
+    await expect(page.locator('.vp0')).toContainText('mynter');
+    await expect(page.locator('.vp0')).toContainText('Runde');
   });
 });
 
