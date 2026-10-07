@@ -2,8 +2,10 @@ import { Game, DT, LAPS, MAX_PLAYERS } from './game.js';
 import { Input } from './input.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
-import { MAX_SPEED } from './truck.js';
+import { MAX_SPEED, driftTier } from './truck.js';
+import { groundHeight } from './terrain.js';
 import { Net, lerpSnapshot } from './net.js';
+import { loadRecords, submitTime } from './records.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -120,7 +122,8 @@ function clientMessage(m) {
     if (client.buf.length === 1) client.rq = m.q;
     if (client.slot !== null && client.status !== 'full') client.status = 'playing';
     for (const e of m.s.ev || []) {
-      if (e.truck === undefined || e.truck === client.slot || e.type === 'finish') sound.play(e.type);
+      if (e.truck === undefined || e.truck === client.slot || e.other === client.slot || e.type === 'finish') sound.play(e.type, e);
+      renderer.fx.onEvent(e, game);
     }
   }
 }
@@ -160,7 +163,10 @@ function simStep() {
     return s.kind === 'local' ? input.player(s.k) : (host.peers.get(s.id)?.input || IDLE);
   });
   game.step(lastInputs);
-  for (const e of game.events) sound.play(e.type);
+  for (const e of game.events) {
+    sound.play(e.type, e);
+    renderer.fx.onEvent(e, game);
+  }
   if (host.peers.size) host.evBuf.push(...game.events);
   game.events.length = 0;
 
@@ -234,6 +240,11 @@ function currentViews() {
 
 const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
 let lastKey = '';
+function updateBest() {
+  const { best } = loadRecords();
+  setText($('best'), best === null ? '' : `Rekord: ${fmtTime(best)}`);
+}
+updateBest();
 function updateHud(views = currentViews()) {
   const playing = role === 'host' || (client.status === 'playing' && !!client.cur);
   const key = `${views.join()}|${game.trucks.length}|${role}`;
@@ -274,6 +285,14 @@ function updateHud(views = currentViews()) {
       $('winner-text').textContent = `Spiller ${game.winner + 1} vant!`;
       $('winner-text').style.color = COLORS[game.winner];
       $('winner-time').textContent = `Tid: ${fmtTime(game.finishTime)}`;
+      const rec = submitTime(game.seed, game.finishTime);
+      let recText = '';
+      if (rec.newRecord) recText = 'NY REKORD!';
+      else if (rec.newTrackRecord) recText = 'NY BANEREKORD!';
+      setText($('record-text'), recText);
+      $('record-text').classList.toggle('hidden', !recText);
+      $('best-time').textContent = `Rekord: ${fmtTime(Math.min(rec.best ?? Infinity, game.finishTime))}`;
+      updateBest();
       $('result-scores').innerHTML = game.order().map((t, i) =>
         `<div class="rs c${t.id}"><div class="pl">${i + 1}. Spiller ${t.id + 1}</div><div class="big" id="res-score-${t.id}">${t.score}</div><div>mynter</div></div>`).join('');
       $('again').innerHTML = 'Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen';
@@ -303,11 +322,13 @@ function updateHud(views = currentViews()) {
     rw.classList.toggle('show', !!warn);
     let text = '', cls = '';
     if (game.state === 'racing') {
-      if (t.msgTimer > 0) { text = t.msg; cls = t.stun > 0 ? 'stun' : t.turbo > 0 ? 'turbo' : t.shield > 0 ? 'shield' : ''; }
+      if (t.msgTimer > 0) { text = t.msg; cls = t.stun > 0 ? 'stun' : t.slick > 0 ? 'slick' : t.turbo > 0 ? 'turbo' : t.shield > 0 ? 'shield' : ''; }
       else if (t.stun > 0) { text = 'Truffet!'; cls = 'stun'; }
+      else if (t.slick > 0) { text = 'Sladd!'; cls = 'slick'; }
+      else if (driftTier(t.drift) > 0) { text = 'DRIFT'; cls = `drift${driftTier(t.drift)}`; }
       else if (t.turbo > 0) { text = 'TURBO!'; cls = 'turbo'; }
       else if (t.draft > 0.3) { text = 'Slipstream'; cls = 'draft'; }
-      else if (t.shield > 0) { text = 'Skjold'; cls = 'shield'; }
+      else if (t.shield > 0) { text = `Skjold ${Math.ceil(t.shield)}s`; cls = 'shield'; }
     }
     const fx = $(`fx-${i}`);
     setText(fx, text);
@@ -430,12 +451,15 @@ window.__game = {
         x: t.x, z: t.z, theta: t.theta, speed: t.speed, score: t.score,
         lat: t.lat, s: t.s, dist: t.dist, lap: game.lap(t), place: game.place(t),
         onRoad: t.onRoad, wrongWay: t.wrongWay,
-        y: t.y, air: t.air, turbo: t.turbo, shield: t.shield, stun: t.stun, draft: t.draft, catchup: t.catchup, msg: t.msg,
+        y: t.y, ground: groundHeight(t.x, t.z), air: t.air, drift: t.drift, turbo: t.turbo, shield: t.shield, stun: t.stun, slick: t.slick, draft: t.draft, catchup: t.catchup, msg: t.msg,
       })),
       boxes: game.boxes.length,
       barricades: game.barricades.map((b) => ({ s: b.s, life: b.life })),
       projectiles: game.projectiles.length,
+      oils: game.oils.length,
+      mines: game.mines.length,
       jumps: game.track.jumps,
+      padList: game.track.pads,
       pads: [input.padInfo(0), input.padInfo(1)],
       triangles: renderer.renderer.info.render.triangles,
       net: { role, peers: host.peers.size, slots: host.slots.length, direct: net ? net.direct : 0, clientStatus: client.status, clientSlot: client.slot, seed: game.seed },
@@ -445,9 +469,10 @@ window.__game = {
   teleport(i, s, lat = 0, lap = 0) {
     game.trucks[i].place(game.track, s, lat, lap * game.track.length + s);
   },
-  // Fjerner item-bokser (og eventuelt ramper) så fysikktester ikke forstyrres av tilfeldige power-ups.
+  // Fjerner item-bokser (boost-pads og eventuelt ramper) så fysikktester ikke forstyrres av tilfeldige power-ups.
   quiet(keepJumps = false) {
     game.boxes.forEach((b) => { b.cooldown = 1e9; });
+    game.track.pads = [];
     if (!keepJumps) game.track.jumps = [];
   },
   addBarricade(s) {

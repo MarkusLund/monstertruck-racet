@@ -1,5 +1,8 @@
 import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS } from './track.js';
+import { clearance, setTerrain } from './terrain.js';
+import { placePads, onPad, PAD_TURBO } from './pads.js';
 import { Truck, TURBO_TIME, SHIELD_TIME, STUN_TIME } from './truck.js';
+import { pickItem, dropOil, dropMine, updateOils, updateMines } from './powerups.js';
 
 export const DT = 1 / 60;
 export const LAPS = 3;
@@ -28,9 +31,12 @@ export function mulberry(seed) {
   };
 }
 
+// Høyde over bakken (y er absolutt: terreng + hoppehøyde). Bor i terrain.js så pads/power-ups kan bruke den uten importsirkel.
+export { clearance };
+
 // Felt som sendes til tilskuere/fjernspillere hver gang verten sender et øyeblikksbilde.
 export const TRUCK_FIELDS =['x', 'y', 'z', 'theta', 'vx', 'vz', 'vy', 'roll', 'wheelSpin', 'air', 'rampVy', 'onRoad', 'lat', 's', 'dist',
-  'wrongWay', 'turbo', 'shield', 'stun', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
+  'wrongWay', 'drift', 'turbo', 'shield', 'stun', 'slick', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
 
 // Spilltilstander: 'menu' -> 'countdown' -> 'racing' -> 'finished'
 export class Game {
@@ -57,6 +63,8 @@ export class Game {
     const r = mulberry(this.seed);
     this.track = buildTrack(r);
     const { track } = this;
+    setTerrain(track, this.seed);
+    track.pads = placePads(track);
     this.trucks.forEach((t, i) => {
       t.score = 0;
       t.finished = false;
@@ -67,6 +75,8 @@ export class Game {
     this.boxes = placeItemBoxes(track);
     this.projectiles = [];
     this.barricades = [];
+    this.oils = [];
+    this.mines = [];
     this.time = 0;
     this.countdown = COUNTDOWN;
     this.winner = null;
@@ -130,6 +140,8 @@ export class Game {
     this.collideTrucks();
     this.updateBarricades();
     this.updateProjectiles();
+    updateOils(this, DT);
+    updateMines(this, DT);
     this.trucks.forEach((t) => this.afterStep(t));
     for (const b of this.boxes) b.cooldown = Math.max(0, b.cooldown - DT);
   }
@@ -158,7 +170,7 @@ export class Game {
         const a = this.trucks[i], b = this.trucks[k];
         const dx = b.x - a.x, dz = b.z - a.z;
         const d = Math.hypot(dx, dz) || 0.001;
-        if (d >= min || Math.abs(a.y - b.y) > 1.8) continue;
+        if (d >= min || Math.abs(clearance(a) - clearance(b)) > 1.8) continue;
         const nx = dx / d, nz = dz / d;
         const push = (min - d) / 2;
         a.x -= nx * push; a.z -= nz * push;
@@ -168,7 +180,7 @@ export class Game {
           const j = (-(1 + 0.5) * rel) / 2;
           a.vx -= nx * j; a.vz -= nz * j;
           b.vx += nx * j; b.vz += nz * j;
-          if (-rel > 5) this.emit({ type: 'bump', truck: a.id });
+          if (-rel > 5) this.emit({ type: 'bump', truck: a.id, other: b.id, power: -rel });
           // Rammer man rumpa på en truck foran seg, spinner den foran rundt én gang.
           if (-rel > 6) { this.rearHit(a, b, nx, nz); this.rearHit(b, a, -nx, -nz); }
         }
@@ -183,7 +195,7 @@ export class Game {
     const ramming = Math.cos(o.theta) * nx + Math.sin(o.theta) * nz < -0.6;
     if (!behind || !ramming) return;
     t.spin = 0.7; // 9 rad/s i 0,7 s ≈ én runde
-    this.emit({ type: 'hit', truck: t.id });
+    this.emit({ type: 'hit', truck: t.id, cause: 'spin' });
   }
 
   // Veisperrer: tette kloss over hele asfalten som forsvinner etter en stund.
@@ -193,16 +205,17 @@ export class Game {
     for (const bar of this.barricades) {
       for (const t of this.trucks) {
         const ds = wrapDiff(t.s - bar.s, length);
-        if (Math.abs(ds) > 4.2 || Math.abs(t.lat - bar.lat) > bar.halfWidth + 1.4 || t.y > 1.4) continue;
+        if (Math.abs(ds) > 4.2 || Math.abs(t.lat - bar.lat) > bar.halfWidth + 1.4 || clearance(t) > 1.4) continue;
         if (t.shield > 0) {
           t.shield = 0;
           bar.life = 0;
           t.say('Skjoldet knuste veisperren!');
-          this.emit({ type: 'hit', truck: t.id });
+          this.emit({ type: 'hit', truck: t.id, cause: 'shield' });
           continue;
         }
         // Skyv trucken tilbake på den siden den kom fra, og ta av mesteparten av farten.
         const side = ds >= 0 ? 1 : -1;
+        const impact = t.speed;
         const n = t.nearest;
         const move = side * 4.2 - ds;
         t.x += n.tx * move;
@@ -213,7 +226,7 @@ export class Game {
           t.vz -= n.tz * along * 1.3;
         }
         t.vx *= 0.6; t.vz *= 0.6;
-        if (!bar.hit) { bar.hit = true; this.emit({ type: 'bump', truck: t.id }); }
+        if (!bar.hit) { bar.hit = true; this.emit({ type: 'bump', truck: t.id, power: impact }); }
         t.say('Veisperre! Ta omveien i gresset');
       }
     }
@@ -231,7 +244,7 @@ export class Game {
       }
       const dx = target.x - p.x, dz = target.z - p.z;
       const d = Math.hypot(dx, dz) || 0.001;
-      if (d < 3 && target.y > ROCKET_HIT_HEIGHT) { p.missed = true; return true; }
+      if (d < 3 && clearance(target) > ROCKET_HIT_HEIGHT) { p.missed = true; return true; }
       if (d < 3 || p.age > 4) {
         if (d < 3) this.hitByRocket(target);
         return false;
@@ -244,14 +257,15 @@ export class Game {
   }
 
   hitByRocket(t) {
-    if (t.shield > 0) {
+    const shielded = t.shield > 0;
+    if (shielded) {
       t.shield = 0;
       t.say('Skjoldet reddet deg!');
     } else {
       t.stun = STUN_TIME;
       t.say('Truffet av rakett!');
     }
-    this.emit({ type: 'hit', truck: t.id });
+    this.emit({ type: 'hit', truck: t.id, cause: 'rocket', shielded });
   }
 
   // Delte ut et tilfeldig power-up. Den som ligger bak får bedre (og mer skadelige) ting enn lederen.
@@ -260,14 +274,20 @@ export class Game {
     const place = order.indexOf(t) + 1;
     const leader = order[0];
     const ahead = order[Math.max(0, place - 2)]; // trucken rett foran (rakettmålet)
-    const pool = place === 1 ? ['turbo', 'shield'] : ['turbo', 'rocket', 'barricade'];
-    const item = pool[Math.floor(this.rand() * pool.length)];
+    const rank = this.trucks.length > 1 ? (place - 1) / (this.trucks.length - 1) : 0;
+    const item = pickItem(rank, this.rand());
     if (item === 'turbo') {
       t.turbo = TURBO_TIME;
       t.say('TURBO!');
     } else if (item === 'shield') {
       t.shield = SHIELD_TIME;
       t.say('Skjold!');
+    } else if (item === 'oil') {
+      dropOil(this, t);
+      t.say('Oljeflekk lagt ut!');
+    } else if (item === 'mine') {
+      dropMine(this, t);
+      t.say('Mine lagt ut!');
     } else if (item === 'rocket') {
       this.projectiles.push({ x: t.x, z: t.z, owner: t.id, target: ahead.id, age: 0, dir: t.theta });
       t.say('Rakett!');
@@ -297,13 +317,22 @@ export class Game {
       }
     }
     // Item-bokser
-    if (this.state === 'racing' && t.y < 2.5) {
+    if (this.state === 'racing' && clearance(t) < 2.5) {
       for (const b of this.boxes) {
         if (b.cooldown > 0 || Math.abs(b.x - t.x) > BOX_RADIUS || Math.abs(b.z - t.z) > BOX_RADIUS) continue;
         if (Math.hypot(b.x - t.x, b.z - t.z) < BOX_RADIUS) {
           b.cooldown = BOX_COOLDOWN;
           this.giveItem(t);
         }
+      }
+    }
+
+    // Boost-pads
+    if (this.state === 'racing') {
+      for (const pad of this.track.pads) {
+        if (!onPad(pad, t, this.track.length)) continue;
+        if (t.turbo < PAD_TURBO - 0.3) t.say('BOOST!', 1);
+        t.turbo = Math.max(t.turbo, PAD_TURBO);
       }
     }
 
@@ -355,6 +384,8 @@ Game.prototype.snapshot = function snapshot() {
     bx: this.boxes.map((b) => Math.round(b.cooldown * 10) / 10),
     pr: this.projectiles.map((p) => [p.x, p.z, p.dir, p.target, p.missed ? 1 : 0]),
     ba: this.barricades.map((b) => [b.s, b.x, b.z, b.theta, b.life]),
+    oi: this.oils.map((o) => [Math.round(o.x * 10) / 10, Math.round(o.z * 10) / 10, Math.round(o.life * 10) / 10]),
+    mi: this.mines.map((m) => [Math.round(m.x * 10) / 10, Math.round(m.z * 10) / 10]),
   };
 };
 
@@ -377,4 +408,6 @@ Game.prototype.applySnapshot = function applySnapshot(sn) {
   this.boxes.forEach((b, i) => { b.cooldown = sn.bx[i] ?? 0; });
   this.projectiles = sn.pr.map(([x, z, dir, target, missed]) => ({ x, z, dir, target, missed: !!missed }));
   this.barricades = sn.ba.map(([s, x, z, theta, life]) => ({ s, x, z, theta, lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life }));
+  this.oils = sn.oi.map(([x, z, life]) => ({ x, z, life }));
+  this.mines = sn.mi.map(([x, z]) => ({ x, z }));
 };

@@ -1,7 +1,10 @@
 import * as THREE from 'three';
-import { posAt, SPACING } from './track.js';
-import { MAX_SPEED } from './truck.js';
+import { posAt, heightAt, SPACING } from './track.js';
+import { MAX_SPEED, driftTier } from './truck.js';
+import { groundHeight, groundSlope, roadDistance } from './terrain.js';
+import { PAD_LENGTH, PAD_HALF_WIDTH } from './pads.js';
 import { Countdown3D } from './countdown.js';
+import { Fx } from './fx.js';
 
 export const PLAYER_COLORS = [
   { body: 0xe8412c, dark: 0xa82513 },
@@ -34,6 +37,9 @@ function canvasTexture(size, draw, repeat) {
   t.anisotropy = 4;
   return t;
 }
+
+const SPARKS = 28;
+const DRIFT_COLORS = [0xffe23a, 0xff8a1f, 0x3aa8ff]; // gul, oransje, blå
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 
@@ -141,17 +147,23 @@ function strip(track, latA, latB, y, colorAt, material, vScale = 1 / 14) {
   const pos = [], col = [], uv = [];
   const { pts, count } = track;
   const c = new THREE.Color();
+  const segs = Math.max(1, Math.ceil(Math.abs(latB - latA) / 3));
   for (let i = 0; i < count; i++) {
     const a = pts[i], b = pts[(i + 1) % count];
     const color = colorAt(i);
     if (!color) continue;
     c.set(color);
-    const v = (p, lat) => [p.x + p.nx * lat, y, p.z + p.nz * lat];
-    const quad = [v(a, latA), v(a, latB), v(b, latB), v(a, latA), v(b, latB), v(b, latA)];
+    const v = (p, lat) => { const x = p.x + p.nx * lat, z = p.z + p.nz * lat; return [x, groundHeight(x, z) + y, z]; };
     const va = i * SPACING * vScale, vb = (i + 1) * SPACING * vScale;
-    const uvs = [[0, va], [1, va], [1, vb], [0, va], [1, vb], [0, vb]];
-    for (const q of quad) { pos.push(...q); col.push(c.r, c.g, c.b); }
-    for (const t of uvs) uv.push(...t);
+    // Delt på tvers så veien følger terrenget.
+    for (let k = 0; k < segs; k++) {
+      const la = latA + (latB - latA) * (k / segs), lb = latA + (latB - latA) * ((k + 1) / segs);
+      const ua = k / segs, ub = (k + 1) / segs;
+      const quad = [v(a, la), v(a, lb), v(b, lb), v(a, la), v(b, lb), v(b, la)];
+      const uvs = [[ua, va], [ub, va], [ub, vb], [ua, va], [ub, vb], [ua, vb]];
+      for (const q of quad) { pos.push(...q); col.push(c.r, c.g, c.b); }
+      for (const t of uvs) uv.push(...t);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -164,6 +176,80 @@ function strip(track, latA, latB, y, colorAt, material, vScale = 1 / 14) {
   const m = new THREE.Mesh(g, mat);
   m.receiveShadow = true;
   return m;
+}
+
+// Boost-pad som et lite rutenett der hvert hjørne følger terrenget (en flat plate ville gravd seg ned i bakkene).
+// Teksturens opp-retning (v) peker i kjøreretningen.
+function padGeometry(track, pad, n = 4) {
+  const pos = [], uv = [], index = [];
+  for (let i = 0; i <= n; i++) {
+    for (let k = 0; k <= n; k++) {
+      const u = k / n, v = i / n;
+      const p = posAt(track, pad.s + (v - 0.5) * PAD_LENGTH, pad.lat + (u - 0.5) * PAD_HALF_WIDTH * 2);
+      pos.push(p.x, groundHeight(p.x, p.z) + 0.09, p.z);
+      uv.push(u, v);
+      if (i < n && k < n) {
+        const a = i * (n + 1) + k, b = a + n + 1;
+        index.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(index);
+  return g;
+}
+
+// Legger en flat geometri (i XZ-planet) oppå terrenget rundt (x, z). Regnes bare om når posisjonen endres.
+function drape(mesh, x, z, lift) {
+  const { userData: u } = mesh;
+  if (u.x === x && u.z === z) return;
+  u.x = x; u.z = z;
+  const pos = mesh.geometry.attributes.position;
+  for (let k = 0; k < pos.count; k++) pos.setY(k, groundHeight(x + pos.getX(k), z + pos.getZ(k)) + lift);
+  pos.needsUpdate = true;
+  mesh.geometry.computeBoundingSphere();
+  mesh.position.set(x, 0, z);
+}
+
+const TERRAIN_SIZE = 1400;
+const TERRAIN_STEP = 4;
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// Bakken: rutenett med høydeforskyvning og farge etter høyde (mørk grønn i daler, lysere og tørr på koller).
+// Rett under veien senkes den litt, så asfalten aldri blir dekket av gresset.
+function terrainGeometry(cx, cz) {
+  const n = TERRAIN_SIZE / TERRAIN_STEP;
+  const x0 = Math.round(cx) - TERRAIN_SIZE / 2, z0 = Math.round(cz) - TERRAIN_SIZE / 2;
+  const pos = new Float32Array((n + 1) * (n + 1) * 3), col = new Float32Array((n + 1) * (n + 1) * 3), uv = new Float32Array((n + 1) * (n + 1) * 2);
+  const low = [0.62, 0.86, 0.62], high = [1, 0.96, 0.74];
+  for (let iz = 0; iz <= n; iz++) {
+    for (let ix = 0; ix <= n; ix++) {
+      const k = iz * (n + 1) + ix;
+      const x = x0 + ix * TERRAIN_STEP, z = z0 + iz * TERRAIN_STEP;
+      const h = groundHeight(x, z);
+      const dip = 0.15 * (1 - Math.min(1, Math.max(0, (roadDistance(x, z) - 9.5) / 3)));
+      pos.set([x, h - dip, z], k * 3);
+      const t = Math.max(0, Math.min(1, (h + 6) / 12));
+      col.set(low.map((l, c) => lerp(l, high[c], t)), k * 3);
+      uv.set([ix / n, 1 - iz / n], k * 2);
+    }
+  }
+  const index = [];
+  for (let iz = 0; iz < n; iz++) {
+    for (let ix = 0; ix < n; ix++) {
+      const a = iz * (n + 1) + ix, b = a + 1, c = a + n + 1, d = c + 1;
+      index.push(a, c, b, b, c, d);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(index);
+  g.computeVertexNormals();
+  return g;
 }
 
 function buildTruck(colors, number, tire) {
@@ -258,11 +344,13 @@ export class Renderer {
     this.renderer.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
     this.countdown = new Countdown3D();
+    this.fx = new Fx(this.scene);
     this.renderer.info.autoReset = false;
     this.scene.background = skyTexture();
     this.scene.fog = new THREE.Fog(0xcfe8f7, 140, 420);
     this.cameras = [0, 1, 2, 3].map(() => new THREE.PerspectiveCamera(60, 1, 0.5, 600));
     this.camAngle = [0, 0, 0, 0];
+    this.camGround = [0, 0, 0, 0]; // glattet bakkehøyde under hver spiller (kameraet skal ikke riste over bulker)
     this.camReady = false;
     this.trucks = [];
     this.coinMeshes = [];
@@ -304,9 +392,8 @@ export class Renderer {
     const cx = (bb.x0 + bb.x1) / 2, cz = (bb.z0 + bb.z1) / 2;
 
     const grass = grassTexture();
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.MeshStandardMaterial({ map: grass, roughness: 1, metalness: 0 }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.set(cx, 0, cz);
+    grass.repeat.set(TERRAIN_SIZE / 20, TERRAIN_SIZE / 20);
+    const ground = new THREE.Mesh(terrainGeometry(cx, cz), new THREE.MeshStandardMaterial({ map: grass, roughness: 1, metalness: 0, vertexColors: true }));
     ground.receiveShadow = true;
     scene.add(ground);
 
@@ -333,7 +420,8 @@ export class Renderer {
         const p = track.pts[i];
         const lat = side * (track.wallLat + 0.6);
         q.setFromAxisAngle(up, -Math.atan2(p.tz, p.tx));
-        m4.compose(new THREE.Vector3(p.x + p.nx * lat, 0.7, p.z + p.nz * lat), q, new THREE.Vector3(1, 1, 1));
+        const bx = p.x + p.nx * lat, bz = p.z + p.nz * lat;
+        m4.compose(new THREE.Vector3(bx, groundHeight(bx, bz) + 0.7, bz), q, new THREE.Vector3(1, 1, 1));
         blocks.setMatrixAt(n, m4);
         blocks.setColorAt(n, new THREE.Color((i / 2) % 2 ? 0xe8412c : 0xf4f4f4));
         n++;
@@ -351,7 +439,7 @@ export class Renderer {
     });
     const start = posAt(track, 0, 0);
     const finish = new THREE.Group();
-    finish.position.set(start.x, 0, start.z);
+    finish.position.set(start.x, groundHeight(start.x, start.z), start.z);
     finish.rotation.y = -start.theta;
     const line = new THREE.Mesh(new THREE.PlaneGeometry(3, hw * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.7 }));
     line.receiveShadow = true;
@@ -405,7 +493,7 @@ export class Renderer {
     trunks.castShadow = leaves.castShadow = true;
     trunks.receiveShadow = leaves.receiveShadow = true;
     spots.forEach(([x, z, s], i) => {
-      m4.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
+      m4.compose(new THREE.Vector3(x, groundHeight(x, z) - 0.3, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
       trunks.setMatrixAt(i, m4);
       leaves.setMatrixAt(i, m4);
     });
@@ -443,10 +531,25 @@ export class Renderer {
       ramp.castShadow = true;
       ramp.receiveShadow = true;
       const p = posAt(track, j.s0, 0);
-      ramp.position.set(p.x, 0.05, p.z);
+      ramp.position.set(p.x, groundHeight(p.x, p.z) + 0.05, p.z);
       ramp.rotation.y = -p.theta;
       scene.add(ramp);
     }
+
+    // Boost-pads: lysende piler på asfalten.
+    const arrows = canvasTexture(128, (g, sz) => {
+      g.fillStyle = '#06222e';
+      g.fillRect(0, 0, sz, sz);
+      g.fillStyle = '#35e8ff';
+      for (const y of [0.08, 0.4]) {
+        g.beginPath();
+        g.moveTo(sz * 0.5, sz * y); g.lineTo(sz * 0.92, sz * (y + 0.34)); g.lineTo(sz * 0.7, sz * (y + 0.34));
+        g.lineTo(sz * 0.5, sz * (y + 0.16)); g.lineTo(sz * 0.3, sz * (y + 0.34)); g.lineTo(sz * 0.08, sz * (y + 0.34));
+        g.fill();
+      }
+    }, 0);
+    const padMat = new THREE.MeshBasicMaterial({ map: arrows, side: THREE.DoubleSide });
+    for (const pad of track.pads) scene.add(new THREE.Mesh(padGeometry(track, pad), padMat));
   }
 
   // Trucker og effekter lages en gang og gjenbrukes mellom løp.
@@ -473,8 +576,16 @@ export class Renderer {
       bubble.position.y = 2;
       bubble.visible = false;
       t.root.add(bubble);
+      // Drift-gnister/røyk ved bakhjulene; fargen følger drift-ladningen.
+      const sparkGeo = new THREE.BufferGeometry();
+      sparkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SPARKS * 3), 3));
+      const sparkMat = new THREE.PointsMaterial({ size: 0.7, transparent: true, opacity: 0.9, depthWrite: false });
+      const sparks = new THREE.Points(sparkGeo, sparkMat);
+      sparks.frustumCulled = false;
+      sparks.visible = false;
+      t.root.add(sparks);
       this.scene.add(t.root);
-      return { ...t, flames, bubble };
+      return { ...t, flames, bubble, sparks };
     });
     // Item-boks (roterende «?»-kube), veisperre og rakett deler geometri.
     this.boxGeo = new THREE.BoxGeometry(2.2, 2.2, 2.2);
@@ -498,6 +609,11 @@ export class Renderer {
     this.boxMeshes = [];
     this.rocketMeshes = [];
     this.barricadeMeshes = [];
+    this.oilMeshes = [];
+    this.mineMeshes = [];
+    this.oilMat = new THREE.MeshStandardMaterial({ color: 0x0b0b10, roughness: 0.05, metalness: 0.6, transparent: true, opacity: 0.88 });
+    this.mineBodyMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, metalness: 0.5, roughness: 0.4 });
+    this.mineLightMat = new THREE.MeshBasicMaterial({ color: 0xff2a1a });
     this.stripeMat = new THREE.MeshStandardMaterial({
       map: canvasTexture(128, (g, sz) => {
         for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#f4f4f4' : '#e8412c'; g.fillRect((i * sz) / 8, 0, sz / 8 + 1, sz); }
@@ -514,7 +630,7 @@ export class Renderer {
     const mat = new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0x7a5200, roughness: 0.25, metalness: 0.7 });
     this.coinMeshes = coins.map((c) => {
       const holder = new THREE.Group();
-      holder.position.set(c.x, 1.6, c.z);
+      holder.position.set(c.x, groundHeight(c.x, c.z) + 1.6, c.z);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = true;
       holder.add(mesh);
@@ -532,7 +648,7 @@ export class Renderer {
     game.boxes.forEach((b, k) => {
       const m = this.boxMeshes[k];
       m.visible = b.cooldown <= 0;
-      m.position.set(b.x, 2.4 + Math.sin(time * 3 + k) * 0.3, b.z);
+      m.position.set(b.x, groundHeight(b.x, b.z) + 2.4 + Math.sin(time * 3 + k) * 0.3, b.z);
       m.rotation.set(0.4, time * 1.8 + k, 0.3);
     });
     this.boxMeshes.forEach((m, k) => { if (k >= game.boxes.length) m.visible = false; });
@@ -554,7 +670,7 @@ export class Renderer {
     this.rocketMeshes.forEach((m, k) => {
       const p = game.projectiles[k];
       m.visible = !!p;
-      if (p) { m.position.set(p.x, 2, p.z); m.rotation.y = -p.dir; }
+      if (p) { m.position.set(p.x, groundHeight(p.x, p.z) + 2, p.z); m.rotation.y = -p.dir; }
     });
 
     grow(this.barricadeMeshes, () => {
@@ -577,10 +693,44 @@ export class Renderer {
       const b = game.barricades[k];
       m.visible = !!b;
       if (b) {
-        m.position.set(b.x, 0, b.z);
+        m.position.set(b.x, groundHeight(b.x, b.z) - 0.2, b.z);
         m.rotation.y = -b.theta;
         // Blinker når den snart forsvinner.
         m.visible = b.life > 3 || Math.floor(time * 8) % 2 === 0;
+      }
+    });
+  }
+
+  // Oljeflekker (blank skive som følger terrenget) og miner (flat skive med blinkende lys) på bakken.
+  updateHazards(game, time) {
+    const grow = (list, make, count) => {
+      while (list.length < count) { const m = make(); this.scene.add(m); list.push(m); }
+    };
+    grow(this.oilMeshes, () => {
+      // Ring med indre radius 0 og flere ringer, så skiva kan bøyes etter bakken.
+      return new THREE.Mesh(new THREE.RingGeometry(0, 4.2, 28, 4).rotateX(-Math.PI / 2), this.oilMat);
+    }, game.oils.length);
+    this.oilMeshes.forEach((m, k) => {
+      const o = game.oils[k];
+      m.visible = !!o;
+      if (o) drape(m, o.x, o.z, 0.11);
+    });
+    grow(this.mineMeshes, () => {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.7, 0.6, 16), this.mineBodyMat);
+      body.position.y = 0.3;
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), this.mineLightMat);
+      light.position.y = 0.8;
+      g.add(body, light);
+      g.userData.light = light;
+      return g;
+    }, game.mines.length);
+    this.mineMeshes.forEach((m, k) => {
+      const b = game.mines[k];
+      m.visible = !!b;
+      if (b) {
+        m.position.set(b.x, groundHeight(b.x, b.z), b.z);
+        m.userData.light.visible = Math.floor(time * 4 + k) % 2 === 0;
       }
     });
   }
@@ -600,9 +750,27 @@ export class Renderer {
     const a = this.camAngle[i];
     const fx = Math.cos(a), fz = Math.sin(a);
     const frac = Math.min(1, truck.speed / MAX_SPEED);
-    cam.position.set(truck.x - fx * (CAM_BACK + frac * 2), CAM_HEIGHT + truck.y * 0.6, truck.z - fz * (CAM_BACK + frac * 2));
-    cam.lookAt(truck.x + fx * CAM_LOOK_AHEAD, truck.y * 0.4, truck.z + fz * CAM_LOOK_AHEAD);
+    const ground = groundHeight(truck.x, truck.z);
+    this.camGround[i] = snap ? ground : this.camGround[i] + (ground - this.camGround[i]) * Math.min(1, 4 * dt);
+    const base = this.camGround[i], up = truck.y - ground; // up: høyde over bakken (hopp)
+    const cx = truck.x - fx * (CAM_BACK + frac * 2), cz = truck.z - fz * (CAM_BACK + frac * 2);
+    const lx = truck.x + fx * CAM_LOOK_AHEAD, lz = truck.z + fz * CAM_LOOK_AHEAD;
+    cam.position.set(cx, Math.max(base + CAM_HEIGHT + up * 0.6, groundHeight(cx, cz) + 3), cz);
+    cam.lookAt(lx, base * 0.5 + groundHeight(lx, lz) * 0.5 + up * 0.4, lz);
     cam.fov = 58 + frac * 10;
+  }
+
+  updateSparks(sparks, t) {
+    const tier = driftTier(t.drift);
+    sparks.visible = tier > 0 && !t.air;
+    if (!sparks.visible) return;
+    sparks.material.color.setHex(DRIFT_COLORS[tier - 1]);
+    const pos = sparks.geometry.attributes.position;
+    for (let k = 0; k < SPARKS; k++) {
+      const side = k % 2 ? 1 : -1;
+      pos.setXYZ(k, -3 - Math.random() * 1.8, 0.2 + Math.random() * 1.1, side * 1.7 + (Math.random() - 0.5) * 1.2);
+    }
+    pos.needsUpdate = true;
   }
 
   // views: hvilke trucker som får en egen skjerm (standard: alle). En fjernspiller viser bare sin egen.
@@ -620,15 +788,32 @@ export class Renderer {
       m.root.rotation.y = -t.theta;
       const bounce = Math.sin(time * 40 + i) * 0.04 * Math.min(1, t.speed / 20) * (t.onRoad ? 0.4 : 2.5);
       m.chassis.position.y = bounce;
-      m.chassis.rotation.x = t.roll;
-      // Nesa peker opp på vei opp av rampen og ned igjen mot landing.
-      m.chassis.rotation.z = t.air ? Math.max(-0.5, Math.min(0.5, t.vy * 0.04)) : Math.max(0, Math.min(0.35, t.rampVy * 0.035));
+      // Hellingen under trucken (terreng og ramper); i lufta peker nesa etter vertikalfarten.
+      let pitchGoal, rollGoal = 0;
+      if (t.air) {
+        pitchGoal = Math.max(-0.5, Math.min(0.5, t.vy * 0.04));
+      } else {
+        const slope = groundSlope(t.x, t.z, t.theta);
+        const ramp = Math.max(0, (heightAt(game.track, t.s + 1, t.lat) - heightAt(game.track, t.s - 1, t.lat)) / 2);
+        pitchGoal = Math.atan(slope.forward) + Math.atan(ramp);
+        rollGoal = -Math.atan(slope.side);
+      }
+      const k = Math.min(1, 12 * dt);
+      m.pitch = snap || m.pitch === undefined ? pitchGoal : m.pitch + (pitchGoal - m.pitch) * k;
+      m.tilt = snap || m.tilt === undefined ? rollGoal : m.tilt + (rollGoal - m.tilt) * k;
+      m.chassis.rotation.x = t.roll + m.tilt;
+      m.chassis.rotation.z = m.pitch;
       m.flames.visible = t.turbo > 0;
       if (m.flames.visible) m.flames.scale.set(0.8 + Math.random() * 0.5, 1, 1);
+      this.updateSparks(m.sparks, t);
       m.bubble.visible = t.shield > 0 && (t.shield > 2 || Math.floor(time * 8) % 2 === 0);
+      m.bubble.material.opacity = 0.34 + Math.sin(time * 6) * 0.1;
+      m.bubble.scale.setScalar(1 + Math.sin(time * 6) * 0.03);
       m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
       this.updateCamera(i, t, dt, snap);
+      this.fx.applyCamera(this.cameras[i], i, time);
     });
+    this.fx.update(game, dt);
     game.coins.forEach((c, k) => {
       const holder = this.coinMeshes[k];
       holder.visible = !c.taken;
@@ -636,6 +821,7 @@ export class Renderer {
     });
 
     this.updateProps(game, time);
+    this.updateHazards(game, time);
 
     const { renderer } = this;
     const { w, h } = this.size;
@@ -656,8 +842,8 @@ export class Renderer {
       cam.aspect = vw / vh;
       cam.updateProjectionMatrix();
       const tr = game.trucks[ti];
-      this.sun.target.position.set(tr.x, 0, tr.z);
-      this.sun.position.set(tr.x - 70, 120, tr.z + 45);
+      this.sun.target.position.set(tr.x, tr.y, tr.z);
+      this.sun.position.set(tr.x - 70, tr.y + 120, tr.z + 45);
       renderer.render(this.scene, cam);
     });
     if (this.countdown.update(game)) this.countdown.render(renderer, w, h);

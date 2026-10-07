@@ -399,7 +399,7 @@ test.describe('Hele løpet', () => {
     expect(s.state).toBe('countdown');
     expect(s.trucks[0].score).toBe(0);
     expect(s.trucks[0].dist).toBeLessThan(0);
-    expect(Math.round(s.trackLength)).not.toBe(Math.round(result.trackLength)); // ny bane
+    expect(s.net.seed).not.toBe(result.net.seed); // ny bane (banelengden er et multiplum av punktavstanden og kan tilfeldigvis bli lik)
     await expect(page.locator('#results')).toBeHidden();
   });
 

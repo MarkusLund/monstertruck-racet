@@ -18,6 +18,7 @@ test.describe('Slipstream og strikk', () => {
   test('slipstream: tett bak den andre gir fartsbonus', async ({ page }) => {
     await open(page);
     await startRace(page);
+    await page.evaluate(() => { window.__game.game.newRace(428960272); window.__game.quiet(); }); // fast bane: den skal ha en rett strekning her
     await teleport(page, 0, 100, 0);
     await teleport(page, 1, 80, 0);
     await page.keyboard.down('w');
@@ -124,8 +125,8 @@ test.describe('Power-ups', () => {
       };
       return { leader: kinds(0), trailing: kinds(1) };
     });
-    expect(r.leader).toEqual(['shield', 'turbo']);
-    expect(r.trailing).toEqual(['barricade', 'rocket', 'turbo']);
+    expect(r.leader).toEqual(['mine', 'oil', 'shield', 'turbo']);
+    expect(r.trailing).toEqual(expect.arrayContaining(['barricade', 'rocket', 'turbo']));
   });
 
   test('turbo gir fart over normal toppfart, selv uten gass', async ({ page }) => {
@@ -280,9 +281,9 @@ test.describe('Kollisjon, hopp og tilfeldige baner', () => {
     for (let i = 0; i < 40; i++) {
       await advance(page, 0.1);
       const t = (await state(page)).trucks[0];
-      maxY = Math.max(maxY, t.y);
+      maxY = Math.max(maxY, t.y - t.ground);
       if (t.air) wasAir = true;
-      if (wasAir && !t.air && t.y === 0) landed = true;
+      if (wasAir && !t.air && t.y === t.ground) landed = true;
     }
     await page.keyboard.up('w');
     expect(wasAir).toBe(true);
@@ -295,7 +296,7 @@ test.describe('Kollisjon, hopp og tilfeldige baner', () => {
     await startRace(page);
     await teleport(page, 0, 20, 0);
     await teleport(page, 1, 22, 0);
-    await page.evaluate(() => { const t = window.__game.game.trucks[0]; t.air = true; t.y = 4; t.vy = 0.1; t.vx = 8; });
+    await page.evaluate(() => { const t = window.__game.game.trucks[0]; t.air = true; t.y += 4; t.vy = 0.1; t.vx = 8; });
     await advance(page, 0.05);
     expect((await state(page)).trucks[1].speed).toBeLessThan(0.5);
   });

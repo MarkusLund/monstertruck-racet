@@ -1,4 +1,5 @@
 import { nearest, posAt, wrapS, heightAt, HALF_WIDTH } from './track.js';
+import { groundHeight, groundSlope } from './terrain.js';
 
 // Arkade-fysikk: bare gass og sving. Trucken har en fartsvektor med litt sidegrep (litt sladd i svingene).
 export const MAX_SPEED = 40;
@@ -10,12 +11,22 @@ const GRAVITY = 28;
 const REVERSE_MAX = 16;
 const BRAKE = 45;
 const JUMP_SPEED = 14; // topphøyde ≈ 3,5 (var 1,8)
+const SLOPE_ACCEL = 14; // tyngdekraft langs bakken: litt tregere opp, litt raskere ned
+const STATIC_GRIP = 1.5; // en truck som står stille uten gass blir stående i slakere bakker enn dette (m/s²)
 
 export const COIN_ACCEL = 0.03; // ekstra akselerasjon per mynt
 export const COIN_ACCEL_MAX = 0.6;
 export const TURBO_TIME = 2.2;
 export const SHIELD_TIME = 10;
 export const STUN_TIME = 1.4;
+// Drift-boost: sladd (full styring i fart + gass) bygger ladning (sekunder); ved utgang får trucken turbo.
+const DRIFT_MIN_SPEED = 20;
+const DRIFT_MIN_STEER = 0.55;
+const DRIFT_GRACE = 0.2; // hvor lenge driften tåler et glipp før den regnes som avsluttet
+export const DRIFT_TIERS = [0.7, 1.5, 2.5]; // ladning for gul, oransje og blå
+const DRIFT_MAX = 3;
+const DRIFT_BOOST_MAX = 1.2;
+export const driftTier = (charge) => DRIFT_TIERS.filter((x) => charge >= x).length;
 
 const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
@@ -31,7 +42,7 @@ export class Truck {
     const p = posAt(track, s, lat);
     this.x = p.x;
     this.z = p.z;
-    this.y = 0;
+    this.y = groundHeight(p.x, p.z); // y er absolutt høyde: terreng + hoppehøyde
     this.vy = 0;
     this.air = false;
     this.rampVy = 0;
@@ -47,7 +58,11 @@ export class Truck {
     this.turbo = 0;
     this.shield = 0;
     this.stun = 0;
+    this.slick = 0; // olje: lite grep og rykkete styring en kort stund
     this.spin = 0; // kort spinn (én runde) etter å ha blitt truffet bakfra av en annen truck
+    this.drift = 0; // drift-ladning i sekunder
+    this.driftGap = 0;
+    this.driftDir = 0;
     this.draft = 0; // 0..1 slipstream
     this.catchup = 0; // 0..1 strikk-effekt for den som ligger bak
     this.msg = '';
@@ -80,10 +95,30 @@ export class Truck {
     this.msgTimer = time;
   }
 
+  // Bygger drift-ladning mens man tar en sving med full styring i fart; ved avslutning (eller retningsskifte)
+  // gir ladningen turbo proporsjonalt.
+  updateDrift(dt, steer, throttle, stunned) {
+    const drifting = !this.air && !stunned && this.speed > DRIFT_MIN_SPEED && Math.abs(steer) > DRIFT_MIN_STEER && throttle > 0;
+    const dir = Math.sign(steer);
+    if (drifting && (!this.driftDir || dir === this.driftDir)) {
+      this.driftDir = dir;
+      this.drift = Math.min(DRIFT_MAX, this.drift + dt);
+      this.driftGap = DRIFT_GRACE;
+    } else if (this.drift > 0 && (drifting || (this.driftGap -= dt) <= 0)) {
+      if (!this.air && !stunned && this.drift >= DRIFT_TIERS[0]) {
+        this.turbo = Math.max(this.turbo, Math.min(DRIFT_BOOST_MAX, 0.4 + 0.8 * (this.drift / DRIFT_TIERS[2])));
+        this.say('DRIFT-BOOST!');
+      }
+      this.drift = 0;
+      this.driftDir = 0;
+    } else if (this.drift === 0) this.driftDir = 0;
+  }
+
   step(input, dt, track, locked = false) {
     this.turbo = Math.max(0, this.turbo - dt);
     this.shield = Math.max(0, this.shield - dt);
     this.stun = Math.max(0, this.stun - dt);
+    this.slick = Math.max(0, this.slick - dt);
     this.spin = Math.max(0, this.spin - dt);
     this.msgTimer = Math.max(0, this.msgTimer - dt);
     this.landed = false;
@@ -93,7 +128,7 @@ export class Truck {
     const throttle = locked || stunned || input.brake > 0 ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
     const brake = locked || stunned ? 0 : Math.max(0, Math.min(1, input.brake || 0));
     const jump = !locked && !stunned && !!input.jump;
-    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer));
+    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer + (this.slick > 0 ? Math.sin(this.slick * 14) * 0.5 : 0)));
     const fx = Math.cos(this.theta), fz = Math.sin(this.theta);
     const sx = -fz, sz = fx;
     let vf = this.vx * fx + this.vz * fz;
@@ -110,6 +145,8 @@ export class Truck {
       if (vf < max) vf = Math.min(max, vf + ACCEL * accMul * throttle * dt);
       else vf -= (vf - max) * (this.onRoad ? 1.2 : 3) * dt;
       vf -= vf * (throttle > 0 ? 0.12 : 0.7) * dt; // rullemotstand, mer uten gass
+      const slopeAcc = groundSlope(this.x, this.z, this.theta).forward * SLOPE_ACCEL;
+      if (throttle > 0 || Math.abs(vf) > 0.5 || Math.abs(slopeAcc) > STATIC_GRIP) vf -= slopeAcc * dt;
       if (brake > 0) {
         // Brems mens trucken ruller framover, deretter rygging.
         if (vf > 0.5) vf = Math.max(0, vf - BRAKE * brake * dt);
@@ -122,7 +159,8 @@ export class Truck {
       this.vy = JUMP_SPEED;
       this.jumped = true;
     }
-    vs *= Math.exp(-GRIP * (air ? 0.1 : 1) * dt);
+    this.updateDrift(dt, steer, throttle, stunned);
+    vs *= Math.exp(-GRIP * (air || this.slick > 0 ? 0.1 : 1) * dt);
 
     const speedFrac = Math.min(1, Math.abs(vf) / MAX_SPEED);
     let turn = steer * TURN_RATE * Math.min(1, Math.abs(vf) / 8) * (1 - 0.35 * Math.min(1, speedFrac));
@@ -160,10 +198,11 @@ export class Truck {
       this.hitWall = true;
     } else this.hitWall = false;
 
-    // Høyde: ramper, og fritt fall etter et hopp.
-    const h = heightAt(track, this.s, this.lat);
+    // Høyde: terreng og ramper, og fritt fall etter et hopp (eller når bakken faller bort under en kolle).
+    const h = groundHeight(this.x, this.z) + heightAt(track, this.s, this.lat);
     if (!this.air) {
-      if (h < this.y - 0.2 && this.rampVy > 2) {
+      const ballistic = this.y + this.rampVy * dt - 0.5 * GRAVITY * dt * dt;
+      if (h < ballistic - 0.02 && this.rampVy > 2) {
         this.air = true;
         this.vy = this.rampVy;
       } else {
