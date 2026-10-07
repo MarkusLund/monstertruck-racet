@@ -24,7 +24,7 @@ document.body.classList.toggle('client', role === 'client');
 
 const COLORS = ['#ff6a50', '#5aa2ff', '#4fd36a', '#ffc83a'];
 const COLOR_NAMES = ['rød', 'blå', 'grønn', 'gul'];
-const IDLE = { throttle: 0, steer: 0 };
+const IDLE = { throttle: 0, steer: 0, brake: 0, jump: false };
 const esc = (x) => String(x).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -86,7 +86,7 @@ function hostMessage(m) {
     else if (m.open) net.send({ t: 'lobby', to: m.id, you: -1, n: game.trucks.length, state: game.state });
   } else if (m.t === 'in') {
     const p = host.peers.get(m.from);
-    if (p && Number.isFinite(m.th) && Number.isFinite(m.st)) p.input = { throttle: clamp(m.th, 0, 1), steer: clamp(m.st, -1, 1) };
+    if (p && Number.isFinite(m.th) && Number.isFinite(m.st)) p.input = { throttle: clamp(m.th, 0, 1), steer: clamp(m.st, -1, 1), brake: clamp(+m.br || 0, 0, 1), jump: !!m.jp };
   }
 }
 
@@ -165,7 +165,7 @@ function simStep() {
 function clientInput() {
   // Fjernspilleren har egen Mac: W A D, piltaster eller kontroller virker alle.
   const a = input.player(0), b = input.player(1);
-  return { th: Math.max(a.throttle, b.throttle), st: clamp(a.steer + b.steer, -1, 1) };
+  return { th: Math.max(a.throttle, b.throttle), st: clamp(a.steer + b.steer, -1, 1), br: Math.max(a.brake, b.brake), jp: a.jump || b.jump };
 }
 
 function clientStep(now) {
@@ -173,11 +173,11 @@ function clientStep(now) {
   if (input.pressed.size || input.padEdges.size) sound.unlock();
   const inp = clientInput();
   lastInputs = [{ throttle: inp.th, steer: inp.st }];
-  const key = `${inp.th.toFixed(2)}|${inp.st.toFixed(2)}`;
+  const key = `${inp.th.toFixed(2)}|${inp.st.toFixed(2)}|${inp.br.toFixed(2)}|${inp.jp ? 1 : 0}`;
   if (net && (key !== client.sent || now - client.sentAt > 100)) {
     client.sent = key;
     client.sentAt = now;
-    net.send({ t: 'in', th: inp.th, st: inp.st });
+    net.send({ t: 'in', th: inp.th, st: inp.st, br: inp.br, jp: inp.jp });
   }
   if (client.cur) {
     const k = (now - client.curTime) / (1000 / 30);

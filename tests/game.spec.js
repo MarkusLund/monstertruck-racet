@@ -19,10 +19,9 @@ test.describe('Startskjerm', () => {
     await open(page);
     const menu = page.locator('#menu');
     await expect(menu).toBeVisible();
-    for (const w of ['MONSTERTRUCK', 'Spiller 1', 'Spiller 2', 'Gass', 'Sving', 'DualSense', 'Tastatur', 'R2', 'for å starte']) {
+    for (const w of ['MONSTERTRUCK', 'Spiller 1', 'Spiller 2', 'Gass', 'Rygg', 'Hopp', 'Sving', 'DualSense', 'Tastatur', 'R2', 'for å starte']) {
       await expect(menu).toContainText(w);
     }
-    for (const w of ['Revers', 'Hopp']) await expect(menu).not.toContainText(w);
     const p1 = page.locator('#menu .ctl.p1');
     const p2 = page.locator('#menu .ctl.p2');
     for (const k of ['W', 'A', 'D']) await expect(p1.locator('kbd', { hasText: new RegExp(`^${k}$`) })).toHaveCount(1);

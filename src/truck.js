@@ -7,6 +7,9 @@ const OFFROAD_MAX = 17;
 const TURN_RATE = 1.9; // rad/s ved full sving
 const GRIP = 5; // hvor raskt sidefarten dør ut
 const GRAVITY = 28;
+const REVERSE_MAX = 16;
+const BRAKE = 45;
+const JUMP_SPEED = 10;
 
 export const COIN_ACCEL = 0.03; // ekstra akselerasjon per mynt
 export const COIN_ACCEL_MAX = 0.6;
@@ -82,9 +85,12 @@ export class Truck {
     this.stun = Math.max(0, this.stun - dt);
     this.msgTimer = Math.max(0, this.msgTimer - dt);
     this.landed = false;
+    this.jumped = false;
 
     const stunned = this.stun > 0;
-    const throttle = locked || stunned ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
+    const throttle = locked || stunned || input.brake > 0 ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
+    const brake = locked || stunned ? 0 : Math.max(0, Math.min(1, input.brake || 0));
+    const jump = !locked && !stunned && !!input.jump;
     const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer));
     const fx = Math.cos(this.theta), fz = Math.sin(this.theta);
     const sx = -fz, sz = fx;
@@ -102,7 +108,17 @@ export class Truck {
       if (vf < max) vf = Math.min(max, vf + ACCEL * accMul * throttle * dt);
       else vf -= (vf - max) * (this.onRoad ? 1.2 : 3) * dt;
       vf -= vf * (throttle > 0 ? 0.12 : 0.7) * dt; // rullemotstand, mer uten gass
+      if (brake > 0) {
+        // Brems mens trucken ruller framover, deretter rygging.
+        if (vf > 0.5) vf = Math.max(0, vf - BRAKE * brake * dt);
+        else vf = Math.max(-REVERSE_MAX * (this.onRoad ? 1 : 0.6), vf - ACCEL * 0.9 * brake * dt);
+      }
       if (stunned) vf *= Math.exp(-2.4 * dt);
+    }
+    if (jump && !air) {
+      this.air = true;
+      this.vy = JUMP_SPEED;
+      this.jumped = true;
     }
     vs *= Math.exp(-GRIP * (air ? 0.1 : 1) * dt);
 
@@ -137,7 +153,7 @@ export class Truck {
       if (out > 0) { this.vx -= n.nx * out * side; this.vz -= n.nz * out * side; }
       this.vx *= 1 - 1.5 * dt;
       this.vz *= 1 - 1.5 * dt;
-      if (!stunned) this.theta += angleDiff(Math.atan2(n.tz, n.tx), this.theta) * 2.2 * dt;
+      if (!stunned && vf > -1) this.theta += angleDiff(Math.atan2(n.tz, n.tx), this.theta) * 2.2 * dt;
       this.lat = side * track.wallLat;
       this.hitWall = true;
     } else this.hitWall = false;

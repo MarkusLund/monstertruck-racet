@@ -3,13 +3,15 @@
 // so keyboard and controllers can be mixed freely.
 
 export const KEYS = {
-  0: { accel: 'KeyW', left: 'KeyA', right: 'KeyD' },
-  1: { accel: 'ArrowUp', left: 'ArrowLeft', right: 'ArrowRight' },
+  0: { accel: 'KeyW', back: 'KeyS', jump: 'Space', left: 'KeyA', right: 'KeyD' },
+  1: { accel: 'ArrowUp', back: 'ArrowDown', jump: 'ShiftRight', left: 'ArrowLeft', right: 'ArrowRight' },
 };
 
 // Standard Gamepad mapping (Chrome/Safari/Firefox on macOS map DualSense to this).
 const BTN_CROSS = 0; // X
 const BTN_R2 = 7;
+const BTN_L2 = 6;
+const BTN_SQUARE = 2;
 const BTN_OPTIONS = 9;
 const BTN_DPAD_LEFT = 14;
 const BTN_DPAD_RIGHT = 15;
@@ -84,7 +86,12 @@ export class Input {
     const pad = this.pads[i];
     let throttle = this.down.has(k.accel) ? 1 : 0;
     let steer = (this.down.has(k.right) ? 1 : 0) - (this.down.has(k.left) ? 1 : 0);
+    let brake = this.down.has(k.back) ? 1 : 0;
+    let jump = this.down.has(k.jump);
     if (pad) {
+      const l2 = this.padButton(pad, BTN_L2);
+      brake = Math.max(brake, l2 > 0.04 ? l2 : 0);
+      jump = jump || this.padButton(pad, BTN_SQUARE) > 0.5;
       const r2 = this.padButton(pad, BTN_R2);
       throttle = Math.max(throttle, r2 > 0.04 ? r2 : 0);
       const x = pad.axes[0] || 0;
@@ -92,7 +99,7 @@ export class Input {
       const dpad = this.padButton(pad, BTN_DPAD_RIGHT) - this.padButton(pad, BTN_DPAD_LEFT);
       steer = Math.max(-1, Math.min(1, steer + stick + dpad));
     }
-    return { throttle, steer };
+    return { throttle, steer, brake, jump };
   }
 
   // "Start / confirm" from keyboard or any controller.
