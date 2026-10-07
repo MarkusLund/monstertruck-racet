@@ -117,7 +117,10 @@ function clientMessage(m) {
 let net = null;
 if (online && role === 'host') {
   net = new Net('host', room, { message: hostMessage });
-  fetch('/api/info').then((r) => r.json()).then((i) => { host.info = i; }).catch(() => {});
+  // Adressene hentes med jevne mellomrom, så en ngrok-tunnel som startes senere dukker opp av seg selv.
+  const loadInfo = () => fetch('/api/info').then((r) => r.json()).then((i) => { host.info = i; }).catch(() => {});
+  loadInfo();
+  setInterval(loadInfo, 5000);
 } else if (online) {
   net = new Net('client', room, {
     open() { client.status = 'lobby'; },
