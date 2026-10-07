@@ -44,7 +44,8 @@ Du kan også bygge en statisk versjon med `npm run build` (legges i `dist/`) og 
 2. Startskjermen viser adressene andre kan bruke (samme nett, f.eks. `http://192.168.1.23:5173`). Del den med kollegaene.
 3. Hver fjernspiller åpner adressen og får en farge (rød, blå, grønn, gul). Styring: `W A D`, piltaster eller kontroller (R2 og venstre stikke).
 4. Verten starter løpet med `Enter`. Verten spiller selv som spiller 1, og `P` slår lokal spiller 2 av og på (to på samme tastatur). Maks 4 trucker totalt.
-5. Alle ser sin egen truck i egen nettleser. Verten ser alle spillere på delt skjerm (1–4 ruter).
+5. Alle ser sin egen truck i egen nettleser. Verten ser alle spillere på delt skjerm (1–4 ruter), med minikart, runder igjen og stilling i midten.
+6. **Tilskuermodus:** kobler noen til midt i et løp (eller løpet er fullt), ser de alle truckene på delt skjerm med minikart og stilling, og blir med i neste løp. Legg til `?watch` i adressen for en ren tilskuerskjerm (f.eks. en TV) som aldri tar en plass i løpet.
 
 Hvis wifi-et har **klientisolering** (enheter kan ikke snakke sammen, vanlig på gjestenett og noen kontornett), når ikke de andre adressen over. Da kan verten åpne en tunnel med f.eks. `ngrok http 5173`. Adressen den gir (`https://….ngrok-free.app`) vises også på startskjermen, og alle kan åpne den. Trafikken går da via internett (ca. 20–60 ms ekstra).
 
@@ -76,6 +77,7 @@ Playwright-testene simulerer to DualSense-kontrollere (mocket Gamepad API) og ta
 - `src/track.js`: tilfeldig banegenerator, ramper, mynt- og boksplassering
 - `src/input.js`: tastatur og kontrollere
 - `src/render.js`: three.js-scene, teksturer, skygger, delt skjerm (1–4 ruter)
+- `src/racecenter.js`: tilskuerpanelet (minikart, runder igjen, stilling)
 - `src/countdown.js`: 3D-tall for nedtellingen
 - `src/net.js`: WebSocket-klient og glatting av øyeblikksbilder
 - `server/relay.js`: relay for flerspiller (Vite-plugin)

@@ -97,3 +97,38 @@ kbd { display: inline-block; min-width: 30px; padding: 3px 8px; border-radius: 6
 body.client .vp .pos { font-size: 44px; }
 body.client .wrong { font-size: 28px; top: 28%; }
 body.client .rocket-warn { font-size: 24px; top: 18%; }
+
+/* Tilskuerpanel: minikart, runder igjen og stilling midt på delt skjerm. */
+#racecenter { position: absolute; z-index: 2; pointer-events: none; display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  width: clamp(160px, min(18vw, 26vh), 270px); padding: 10px 12px 12px; border-radius: 16px; background: rgba(16, 19, 26, .78);
+  border: 3px solid #0a0c11; box-shadow: 0 10px 30px rgba(0,0,0,.45); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  left: 50%; top: 50%; transform: translate(-50%, -50%); }
+#stage #racecenter.hidden { display: none; } /* må slå .n3 (grid) */
+/* Én truck: panelet står til høyre så det ikke dekker trucken. Tre trucker: i den tomme fjerde ruta. */
+#racecenter.n1 { left: auto; right: 14px; transform: translateY(-50%); width: clamp(170px, min(20vw, 34vh), 300px); }
+#racecenter.n3 { left: 75%; top: 75%; width: auto; display: grid; column-gap: 12px; align-content: start;
+  grid-template-columns: clamp(120px, min(17vw, 30vh), 260px) minmax(180px, 220px);
+  grid-template-areas: "map badge" "map laps" "map time" "map list"; grid-template-rows: auto auto auto 1fr; }
+#racecenter.n3 .rc-badge { grid-area: badge; } #racecenter.n3 .rc-laps { grid-area: laps; } #racecenter.n3 .rc-map { grid-area: map; align-self: center; }
+#racecenter.n3 .rc-time { grid-area: time; } #racecenter.n3 .rc-list { grid-area: list; }
+#stage.menu #racecenter, #stage.finished #racecenter { display: none; }
+.rc-badge { align-self: center; padding: 2px 10px; border-radius: 999px; background: #ffd400; color: #10131a; font-size: 11px; font-weight: 900;
+  letter-spacing: 1px; text-transform: uppercase; }
+.rc-badge.hidden { display: none; }
+.rc-laps { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
+.rc-laps span { font-size: 24px; font-weight: 900; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+.rc-laps small { font-size: 13px; font-weight: 800; opacity: .8; }
+#racecenter.final .rc-laps small { color: #ffd400; opacity: 1; animation: blink .8s ease-in-out infinite; }
+.rc-map { width: 100%; aspect-ratio: 1; display: block; border-radius: 10px; background: radial-gradient(#2c4a2a, #1c2c1d); }
+.rc-time { text-align: center; font-size: 13px; font-weight: 700; opacity: .75; font-variant-numeric: tabular-nums; }
+.rc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.rc-list li { position: relative; display: flex; align-items: center; gap: 8px; padding: 4px 8px 6px; border-radius: 8px; background: #131722;
+  border-left: 5px solid var(--c); overflow: hidden; font-size: 14px; }
+.rc-list b { font-size: 17px; font-weight: 900; color: var(--c); min-width: 14px; }
+.rc-list .nm { flex: 1; font-weight: 800; white-space: nowrap; }
+.rc-list .gp { font-size: 12px; font-weight: 700; opacity: .75; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-list i { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--c); opacity: .85; }
+/* Fire ruter: nederste rad har plassering og kort nederst, så panelet i midten ikke dekker dem. */
+.vp.low .pos { top: auto; bottom: 12px; }
+.vp.low .card { top: auto; bottom: 12px; }
+.vp.low .fx { bottom: 80px; }

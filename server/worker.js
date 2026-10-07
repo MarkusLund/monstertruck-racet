@@ -81,6 +81,9 @@ export class GameRoom extends DurableObject {
     if (!p || !m) return;
     if (m.t === 'in') {
       if (Number.isFinite(m.th) && Number.isFinite(m.st)) p.input = { throttle: clamp(m.th, 0, 1), steer: clamp(m.st, -1, 1), brake: clamp(+m.br || 0, 0, 1), jump: !!m.jp };
+    } else if (m.t === 'watch') {
+      p.watch = true; // ren tilskuerskjerm (?watch), tar aldri en plass i løpet
+      if (this.game.state === 'menu') this.sendLobby();
     } else if (m.t === 'start') {
       const g = this.game;
       if (g.state === 'menu' || (g.state === 'finished' && g.stateTime > 1.2)) this.startRace();
@@ -89,7 +92,7 @@ export class GameRoom extends DurableObject {
     }
   }
 
-  players() { return [...this.peers.values()].map((p) => p.key).slice(0, MAX_PLAYERS); }
+  players() { return [...this.peers.values()].filter((p) => !p.watch).map((p) => p.key).slice(0, MAX_PLAYERS); }
 
   peerByKey(key) { for (const p of this.peers.values()) if (p.key === key) return p; return null; }
 
@@ -100,11 +103,12 @@ export class GameRoom extends DurableObject {
 
   startRace() {
     this.slots = this.players();
+    if (!this.slots.length) return; // bare tilskuere i rommet
     this.game.start(this.slots.length);
     this.evBuf = [];
     this.acc = 0;
     this.slots.forEach((key, i) => this.send(this.peerByKey(key).ws, { t: 'assign', slot: i }));
-    for (const p of this.peers.values()) if (!this.slots.includes(p.key)) this.send(p.ws, { t: 'full' });
+    for (const p of this.peers.values()) if (!p.watch && !this.slots.includes(p.key)) this.send(p.ws, { t: 'full' });
   }
 
   // ?restart i adressen: kast hele spilltilstanden og send alle tilbake til lobbyen.

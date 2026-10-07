@@ -763,6 +763,7 @@ export class Renderer {
     renderer.info.reset(); // statistikken dekker bare de to spillerskjermene, ikke nedtellingen
     const rects = layoutViews(views.length);
     renderer.setScissorTest(false);
+    renderer.setClearColor(0x10131a); // ledige ruter (3 spillere i 2×2) skal være mørke
     renderer.clear();
     renderer.setScissorTest(true);
     views.forEach((ti, k) => {

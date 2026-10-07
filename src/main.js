@@ -6,6 +6,7 @@ import { MAX_SPEED, driftTier } from './truck.js';
 import { groundHeight } from './terrain.js';
 import { Net, lerpSnapshot } from './net.js';
 import { loadRecords, submitTime } from './records.js';
+import { RaceCenter } from './racecenter.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -22,6 +23,8 @@ const room = params.get('room') || 'main';
 const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const role = params.get('role') || (isLocal ? 'host' : 'client');
 const online = !manual || params.has('room');
+// ?watch gjør en fjernskjerm til ren tilskuer (f.eks. en TV): den tar aldri en plass i løpet.
+const watch = role === 'client' && params.has('watch');
 // ?restart nullstiller spillet som kjører på Cloudflare (sendes én gang, og fjernes fra adressen så en ny innlasting ikke gjør det igjen).
 let restart = role === 'client' && params.has('restart');
 if (restart) {
@@ -69,6 +72,7 @@ function lobbySlots() {
   for (let k = 0; k < host.localCount; k++) slots.push({ kind: 'local', k });
   for (const p of host.peers.values()) {
     if (slots.length >= MAX_PLAYERS) break;
+    if (p.watch) continue;
     slots.push({ kind: 'peer', id: p.id });
   }
   return slots;
@@ -89,7 +93,7 @@ function startRace() {
   host.evBuf = [];
   host.slots.forEach((s, i) => { if (s.kind === 'peer') net?.send({ t: 'assign', to: s.id, slot: i }); });
   for (const p of host.peers.values()) {
-    if (!host.slots.some((s) => s.kind === 'peer' && s.id === p.id)) net?.send({ t: 'full', to: p.id });
+    if (!p.watch && !host.slots.some((s) => s.kind === 'peer' && s.id === p.id)) net?.send({ t: 'full', to: p.id });
   }
 }
 
@@ -105,6 +109,9 @@ function hostMessage(m) {
     else host.peers.delete(m.id);
     if (game.state === 'menu') sendLobby();
     else if (m.open) net.send({ t: 'lobby', to: m.id, you: -1, n: game.trucks.length, state: game.state });
+  } else if (m.t === 'watch') {
+    const p = host.peers.get(m.from);
+    if (p) { p.watch = true; if (game.state === 'menu') sendLobby(); }
   } else if (m.t === 'in') {
     const p = host.peers.get(m.from);
     if (p && Number.isFinite(m.th) && Number.isFinite(m.st)) p.input = { throttle: clamp(m.th, 0, 1), steer: clamp(m.st, -1, 1), brake: clamp(+m.br || 0, 0, 1), jump: !!m.jp };
@@ -118,9 +125,10 @@ function clientMessage(m) {
   if (m.t === 'hello') {
     client.id = m.id;
     client.status = m.host ? 'lobby' : 'nohost';
+    if (watch) net.send({ t: 'watch' });
     if (restart && m.host) { restart = false; net.send({ t: 'restart' }); }
   }
-  else if (m.t === 'host') client.status = 'lobby';
+  else if (m.t === 'host') { client.status = 'lobby'; if (watch) net.send({ t: 'watch' }); }
   else if (m.t === 'hostgone') { client.status = 'nohost'; client.cur = client.prev = null; client.buf = []; }
   else if (m.t === 'lobby') {
     client.slot = m.you >= 0 ? m.you : null;
@@ -141,6 +149,7 @@ function clientMessage(m) {
     if (client.buf.length > 12) client.buf.shift();
     if (client.buf.length === 1) client.rq = m.q;
     if (client.slot !== null && client.status !== 'full') client.status = 'playing';
+    else if (client.slot === null && client.status === 'lobby') client.status = 'spectate';
     for (const e of m.s.ev || []) {
       if (e.truck === undefined || e.truck === client.slot || e.other === client.slot || e.type === 'finish') sound.play(e.type, e);
       renderer.fx.onEvent(e, game);
@@ -160,7 +169,7 @@ if (online && role === 'host') {
     open() { client.status = 'lobby'; },
     close() { client.status = 'connecting'; },
     message: clientMessage,
-  }, playerId());
+  }, watch ? null : playerId());
 }
 
 // ---------- Simulering (vert) ----------
@@ -235,14 +244,16 @@ function clientStep(now, dt) {
 
 // ---------- HUD ----------
 const viewsEl = $('views');
+const raceCenter = new RaceCenter($('racecenter'));
 let viewsKey = '';
-function buildViews(views) {
+function buildViews(views, center) {
   const rects = layoutViews(views.length);
   viewsEl.innerHTML = '';
   views.forEach((ti, k) => {
     const r = rects[k];
     const el = document.createElement('div');
-    el.className = `vp vp${ti} c${ti}`;
+    // Med fire ruter ligger tilskuerpanelet midt i krysset, så nederste rad får plassering og kort nederst i stedet.
+    el.className = `vp vp${ti} c${ti}${center && views.length === 4 && r.y > 0 ? ' low' : ''}`;
     el.style.cssText = `left:${r.x * 100}%;top:${r.y * 100}%;width:${r.w * 100}%;height:${r.h * 100}%`;
     el.innerHTML = `<div class="pos" id="pos-${ti}"></div>
       <div class="card"><div class="pname">Spiller ${ti + 1}</div>
@@ -253,8 +264,13 @@ function buildViews(views) {
   });
 }
 
+// Tilskuer: en fjernskjerm som ikke er med i løpet (kom inn midt i et løp, løpet var fullt, eller ?watch). Den viser alle truckene.
+function spectating() {
+  return role === 'client' && (client.status === 'spectate' || client.status === 'full') && !!client.cur && game.state !== 'menu';
+}
+
 function currentViews() {
-  if (role === 'client') return [clamp(client.slot ?? 0, 0, game.trucks.length - 1)];
+  if (role === 'client' && !spectating()) return [clamp(client.slot ?? 0, 0, game.trucks.length - 1)];
   return game.trucks.map((_, i) => i);
 }
 
@@ -266,9 +282,17 @@ function updateBest() {
 }
 updateBest();
 function updateHud(views = currentViews()) {
-  const playing = role === 'host' || (client.status === 'playing' && !!client.cur);
-  const key = `${views.join()}|${game.trucks.length}|${role}`;
-  if (key !== viewsKey) { viewsKey = key; buildViews(views); }
+  const spec = spectating();
+  const playing = role === 'host' || spec || (client.status === 'playing' && !!client.cur);
+  // Minikart og stilling midt på skjermen: alltid for tilskuere, og på vertens delte skjerm.
+  const center = spec || (role === 'host' && views.length > 1);
+  const key = `${views.join()}|${game.trucks.length}|${role}|${center}`;
+  if (key !== viewsKey) { viewsKey = key; buildViews(views, center); }
+  const rc = $('racecenter');
+  const showCenter = center && (game.state === 'countdown' || game.state === 'racing');
+  const rcCls = `n${views.length}${showCenter ? '' : ' hidden'}`;
+  if (rc.className !== rcCls) rc.className = rcCls;
+  if (showCenter) raceCenter.update(game, { badge: spec ? (watch ? 'Tilskuer' : 'Tilskuer · du er med i neste løp') : '' });
 
   let status = '';
   if (game.state === 'menu') status = 'Klar?';
@@ -315,7 +339,7 @@ function updateHud(views = currentViews()) {
       updateBest();
       $('result-scores').innerHTML = game.order().map((t, i) =>
         `<div class="rs c${t.id}"><div class="pl">${i + 1}. Spiller ${t.id + 1}</div><div class="big" id="res-score-${t.id}">${t.score}</div><div>mynter</div></div>`).join('');
-      $('again').innerHTML = 'Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen';
+      $('again').innerHTML = spec ? 'Venter på neste løp …' : 'Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen';
     }
   }
 
@@ -385,8 +409,8 @@ function renderClientPanel() {
   const msgs = {
     connecting: 'Kobler til …',
     nohost: 'Venter på at verten åpner spillet …',
-    lobby: 'Koblet til! Trykk Enter (eller ✕) for å starte løpet.',
-    spectate: 'Et løp pågår. Du blir med i neste løp.',
+    lobby: watch ? 'Tilskuerskjerm. Løpet vises her når det starter.' : 'Koblet til! Trykk Enter (eller ✕) for å starte løpet.',
+    spectate: watch ? 'Tilskuerskjerm. Et løp pågår, venter på bilder fra verten …' : 'Et løp pågår. Du blir med i neste løp.',
     full: 'Løpet er fullt (maks 4 spillere). Du blir med i neste løp hvis det er plass.',
     playing: 'Venter på data fra verten …',
   };
