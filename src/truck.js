@@ -47,6 +47,7 @@ export class Truck {
     this.turbo = 0;
     this.shield = 0;
     this.stun = 0;
+    this.slick = 0; // olje: lite grep og rykkete styring en kort stund
     this.spin = 0; // kort spinn (én runde) etter å ha blitt truffet bakfra av en annen truck
     this.draft = 0; // 0..1 slipstream
     this.catchup = 0; // 0..1 strikk-effekt for den som ligger bak
@@ -84,6 +85,7 @@ export class Truck {
     this.turbo = Math.max(0, this.turbo - dt);
     this.shield = Math.max(0, this.shield - dt);
     this.stun = Math.max(0, this.stun - dt);
+    this.slick = Math.max(0, this.slick - dt);
     this.spin = Math.max(0, this.spin - dt);
     this.msgTimer = Math.max(0, this.msgTimer - dt);
     this.landed = false;
@@ -93,7 +95,7 @@ export class Truck {
     const throttle = locked || stunned || input.brake > 0 ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
     const brake = locked || stunned ? 0 : Math.max(0, Math.min(1, input.brake || 0));
     const jump = !locked && !stunned && !!input.jump;
-    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer));
+    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer + (this.slick > 0 ? Math.sin(this.slick * 14) * 0.5 : 0)));
     const fx = Math.cos(this.theta), fz = Math.sin(this.theta);
     const sx = -fz, sz = fx;
     let vf = this.vx * fx + this.vz * fz;
@@ -122,7 +124,7 @@ export class Truck {
       this.vy = JUMP_SPEED;
       this.jumped = true;
     }
-    vs *= Math.exp(-GRIP * (air ? 0.1 : 1) * dt);
+    vs *= Math.exp(-GRIP * (air || this.slick > 0 ? 0.1 : 1) * dt);
 
     const speedFrac = Math.min(1, Math.abs(vf) / MAX_SPEED);
     let turn = steer * TURN_RATE * Math.min(1, Math.abs(vf) / 8) * (1 - 0.35 * Math.min(1, speedFrac));

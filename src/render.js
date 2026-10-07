@@ -498,6 +498,11 @@ export class Renderer {
     this.boxMeshes = [];
     this.rocketMeshes = [];
     this.barricadeMeshes = [];
+    this.oilMeshes = [];
+    this.mineMeshes = [];
+    this.oilMat = new THREE.MeshStandardMaterial({ color: 0x0b0b10, roughness: 0.05, metalness: 0.6, transparent: true, opacity: 0.88 });
+    this.mineBodyMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, metalness: 0.5, roughness: 0.4 });
+    this.mineLightMat = new THREE.MeshBasicMaterial({ color: 0xff2a1a });
     this.stripeMat = new THREE.MeshStandardMaterial({
       map: canvasTexture(128, (g, sz) => {
         for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#f4f4f4' : '#e8412c'; g.fillRect((i * sz) / 8, 0, sz / 8 + 1, sz); }
@@ -585,6 +590,41 @@ export class Renderer {
     });
   }
 
+  // Oljeflekker (flat, blank skive) og miner (flat skive med blinkende lys).
+  updateHazards(game, time) {
+    const grow = (list, make, count) => {
+      while (list.length < count) { const m = make(); this.scene.add(m); list.push(m); }
+    };
+    grow(this.oilMeshes, () => {
+      const m = new THREE.Mesh(new THREE.CircleGeometry(4.2, 28), this.oilMat);
+      m.rotation.x = -Math.PI / 2;
+      return m;
+    }, game.oils.length);
+    this.oilMeshes.forEach((m, k) => {
+      const o = game.oils[k];
+      m.visible = !!o;
+      if (o) m.position.set(o.x, 0.06, o.z);
+    });
+    grow(this.mineMeshes, () => {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.7, 0.6, 16), this.mineBodyMat);
+      body.position.y = 0.3;
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), this.mineLightMat);
+      light.position.y = 0.8;
+      g.add(body, light);
+      g.userData.light = light;
+      return g;
+    }, game.mines.length);
+    this.mineMeshes.forEach((m, k) => {
+      const b = game.mines[k];
+      m.visible = !!b;
+      if (b) {
+        m.position.set(b.x, 0, b.z);
+        m.userData.light.visible = Math.floor(time * 4 + k) % 2 === 0;
+      }
+    });
+  }
+
   resize(cssW, cssH) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(dpr);
@@ -626,6 +666,8 @@ export class Renderer {
       m.flames.visible = t.turbo > 0;
       if (m.flames.visible) m.flames.scale.set(0.8 + Math.random() * 0.5, 1, 1);
       m.bubble.visible = t.shield > 0 && (t.shield > 2 || Math.floor(time * 8) % 2 === 0);
+      m.bubble.material.opacity = 0.34 + Math.sin(time * 6) * 0.1;
+      m.bubble.scale.setScalar(1 + Math.sin(time * 6) * 0.03);
       m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
       this.updateCamera(i, t, dt, snap);
     });
@@ -636,6 +678,7 @@ export class Renderer {
     });
 
     this.updateProps(game, time);
+    this.updateHazards(game, time);
 
     const { renderer } = this;
     const { w, h } = this.size;
