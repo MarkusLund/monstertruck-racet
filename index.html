@@ -12,41 +12,38 @@
       <section class="player p1" data-player="0">
         <div class="pname">Spiller 1</div>
         <div class="score"><span class="coin-icon"></span><span class="score-val" id="score-0">0</span><span class="score-label">mynter</span></div>
+        <div class="lap" id="lap-0">Runde 1/3</div>
         <div class="devices" id="devices-0"></div>
       </section>
       <section class="center">
         <div id="status">Klar?</div>
         <div id="timer">Tid: 0:00.0</div>
-        <div class="progress" aria-label="Fremdrift">
-          <div class="progress-track"></div>
-          <div class="marker m1" id="marker-0">1</div>
-          <div class="marker m2" id="marker-1">2</div>
-          <div class="goal-flag">MÅL</div>
-        </div>
       </section>
       <section class="player p2" data-player="1">
         <div class="pname">Spiller 2</div>
         <div class="score"><span class="coin-icon"></span><span class="score-val" id="score-1">0</span><span class="score-label">mynter</span></div>
+        <div class="lap" id="lap-1">Runde 1/3</div>
         <div class="devices" id="devices-1"></div>
       </section>
     </header>
 
     <main id="stage">
       <canvas id="game"></canvas>
+      <div class="vp vp0"><div class="pos" id="pos-0">1.</div><div class="wrong" id="wrong-0">Feil vei!</div><div class="fx" id="fx-0"></div></div>
+      <div class="vp vp1"><div class="pos" id="pos-1">2.</div><div class="wrong" id="wrong-1">Feil vei!</div><div class="fx" id="fx-1"></div></div>
 
       <div id="menu" class="overlay">
         <div class="panel">
           <h1>MONSTERTRUCK<span>-RACET</span></h1>
-          <p class="tagline">Først til mål vinner! Samle mynter underveis.</p>
+          <p class="tagline">Kjør tre runder! Først i mål vinner. Samle mynter underveis.</p>
           <div class="controls">
             <div class="ctl p1">
               <h2>Spiller 1</h2>
               <div class="pad-status" id="pad-status-0"></div>
               <table>
                 <tr><th></th><th>DualSense</th><th>Tastatur</th></tr>
-                <tr><td>Gass</td><td><kbd>R2</kbd></td><td><kbd>D</kbd></td></tr>
-                <tr><td>Revers</td><td><kbd>L2</kbd></td><td><kbd>A</kbd></td></tr>
-                <tr><td>Hopp</td><td><kbd>✕</kbd></td><td><kbd>W</kbd></td></tr>
+                <tr><td>Gass</td><td><kbd>R2</kbd></td><td><kbd>W</kbd></td></tr>
+                <tr><td>Sving</td><td><kbd>Venstre stikke</kbd></td><td><kbd>A</kbd> <kbd>D</kbd></td></tr>
               </table>
             </div>
             <div class="ctl p2">
@@ -54,13 +51,13 @@
               <div class="pad-status" id="pad-status-1"></div>
               <table>
                 <tr><th></th><th>DualSense</th><th>Tastatur</th></tr>
-                <tr><td>Gass</td><td><kbd>R2</kbd></td><td><kbd>→</kbd></td></tr>
-                <tr><td>Revers</td><td><kbd>L2</kbd></td><td><kbd>←</kbd></td></tr>
-                <tr><td>Hopp</td><td><kbd>✕</kbd></td><td><kbd>↑</kbd></td></tr>
+                <tr><td>Gass</td><td><kbd>R2</kbd></td><td><kbd>↑</kbd></td></tr>
+                <tr><td>Sving</td><td><kbd>Venstre stikke</kbd></td><td><kbd>←</kbd> <kbd>→</kbd></td></tr>
               </table>
             </div>
           </div>
-          <p class="tips">Gass og revers i lufta vipper trucken. Faller du ned i et hull, starter du på nytt før hullet.<br />
+          <p class="tips">Kjør gjennom <b>?</b>-boksene for turbo, skjold, raketter og veisperrer. Ligger du bak, får du bedre power-ups.<br />
+            Kjør tett bak motstanderen for slipstream, og ta rampene for å hoppe. Jo flere mynter, jo bedre akselerasjon. Ny bane hver gang!<br />
             Tastatur og kontroller kan blandes. Første kontroller er spiller 1, den andre er spiller 2.</p>
           <p class="start blink">Trykk <kbd>Enter</kbd> / <kbd>Mellomrom</kbd> eller <kbd>✕</kbd> / <kbd>Options</kbd> for å starte</p>
         </div>

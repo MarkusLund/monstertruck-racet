@@ -1,15 +1,13 @@
-import { Game, DT } from './game.js';
+import { Game, DT, LAPS } from './game.js';
 import { Input } from './input.js';
-import { Camera } from './camera.js';
 import { Renderer } from './render.js';
 import { Sound } from './sound.js';
-import { groundAt } from './track.js';
+import { MAX_SPEED } from './truck.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
 const input = new Input(window);
 const game = new Game();
-const cam = new Camera();
 const renderer = new Renderer(canvas);
 const sound = new Sound();
 
@@ -17,21 +15,18 @@ const sound = new Sound();
 const manual = new URLSearchParams(location.search).has('manual');
 
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
   const r = canvas.getBoundingClientRect();
-  canvas.width = Math.max(1, Math.round(r.width * dpr));
-  canvas.height = Math.max(1, Math.round(r.height * dpr));
-  cam.resize(canvas.width, canvas.height);
+  renderer.resize(Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
 }
 window.addEventListener('resize', resize);
 resize();
-cam.update(game.trucks, DT, true);
 
 function fmtTime(t) {
   const m = Math.floor(t / 60), s = t - m * 60;
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
+let lastInputs = [{ throttle: 0, steer: 0 }, { throttle: 0, steer: 0 }];
 function simStep() {
   input.poll();
   if (input.pressed.size || input.padEdges.size) sound.unlock();
@@ -43,14 +38,10 @@ function simStep() {
   }
   if (input.backPressed() && game.state !== 'menu') game.toMenu();
 
-  const inputs = [input.player(0), input.player(1)];
-  const wasState = game.state;
-  game.step(inputs);
-  if (wasState === 'menu' && game.state === 'countdown') cam.update(game.trucks, DT, true);
+  lastInputs = [input.player(0), input.player(1)];
+  game.step(lastInputs);
   for (const e of game.events) sound.play(e.type);
   game.events.length = 0;
-  cam.update(game.trucks, DT);
-  cam.groundRef = groundAtX(cam.x);
 }
 
 let lastHud = '';
@@ -65,7 +56,9 @@ function updateHud() {
     const pad = input.padInfo(i);
     return `${pad ? `🎮 ${pad.name}` : '🎮 ingen kontroller'} · ⌨️ ${i === 0 ? 'W A D' : '↑ ← →'}`;
   });
-  const key = [status, game.trucks[0].score, game.trucks[1].score, ...devices, game.state].join('|');
+  const laps = game.trucks.map((t) => `Runde ${game.lap(t)}/${LAPS}`);
+  const places = game.trucks.map((t) => `${game.place(t)}.`);
+  const key = [status, game.trucks[0].score, game.trucks[1].score, ...devices, ...laps, ...places, game.state].join('|');
   if (key !== lastHud) {
     lastHud = key;
     statusEl.textContent = status;
@@ -73,11 +66,14 @@ function updateHud() {
     for (const i of [0, 1]) {
       $(`score-${i}`).textContent = game.trucks[i].score;
       $(`devices-${i}`).textContent = devices[i];
+      $(`lap-${i}`).textContent = laps[i];
+      $(`pos-${i}`).textContent = places[i];
       const pad = input.padInfo(i);
       const ps = $(`pad-status-${i}`);
       ps.textContent = pad ? `✓ ${pad.name} tilkoblet` : 'Ingen kontroller – trykk en knapp på kontrolleren for å koble til';
       ps.classList.toggle('on', !!pad);
     }
+    $('stage').className = game.state;
     $('menu').classList.toggle('hidden', game.state !== 'menu');
     $('results').classList.toggle('hidden', game.state !== 'finished');
     if (game.state === 'finished') {
@@ -89,9 +85,27 @@ function updateHud() {
   }
   $('timer').textContent = `Tid: ${fmtTime(game.state === 'finished' ? game.finishTime : game.time)}`;
   for (const i of [0, 1]) {
-    // Track is 34px shorter than the bar (room for the goal label).
-    $(`marker-${i}`).style.left = `calc(${game.progress(game.trucks[i]) * 100}% - ${game.progress(game.trucks[i]) * 34}px)`;
+    const t = game.trucks[i];
+    $(`wrong-${i}`).classList.toggle('show', game.state === 'racing' && t.wrongWay > 1);
+    let text = '', cls = '';
+    if (game.state === 'racing') {
+      if (t.msgTimer > 0) { text = t.msg; cls = t.stun > 0 ? 'stun' : t.turbo > 0 ? 'turbo' : t.shield > 0 ? 'shield' : ''; }
+      else if (t.stun > 0) { text = 'Truffet!'; cls = 'stun'; }
+      else if (t.turbo > 0) { text = 'TURBO!'; cls = 'turbo'; }
+      else if (t.draft > 0.3) { text = 'Slipstream'; cls = 'draft'; }
+      else if (t.shield > 0) { text = 'Skjold'; cls = 'shield'; }
+    }
+    const fx = $(`fx-${i}`);
+    if (fx.textContent !== text) fx.textContent = text;
+    fx.className = `fx ${cls}`;
   }
+}
+
+function updateEngine() {
+  const racing = game.state === 'racing' || game.state === 'countdown';
+  const speed = game.trucks.reduce((a, t) => a + t.speed, 0) / game.trucks.length;
+  const throttle = Math.max(lastInputs[0].throttle, lastInputs[1].throttle);
+  sound.engine(Math.min(1, speed / MAX_SPEED), throttle, racing && game.state !== 'finished');
 }
 
 let acc = 0, last = performance.now(), clock = 0;
@@ -105,8 +119,9 @@ function frame(now) {
     while (acc >= DT && n < 6) { simStep(); acc -= DT; n++; }
     if (n === 6) acc = 0;
   }
-  renderer.draw(game, cam, clock);
+  renderer.draw(game, dt, clock);
   updateHud();
+  updateEngine();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -114,11 +129,16 @@ updateHud();
 
 // Hooks for automated tests.
 window.__game = {
-  game, cam, input,
+  game, input, renderer,
+  // Som advance, men uten å tegne mellom hvert steg (raskt nok for lange simuleringer).
+  simulate(seconds) {
+    const n = Math.round(seconds / DT);
+    for (let i = 0; i < n; i++) simStep();
+  },
   advance(seconds) {
     const n = Math.round(seconds / DT);
     for (let i = 0; i < n; i++) simStep();
-    renderer.draw(game, cam, clock);
+    renderer.draw(game, DT, clock);
     updateHud();
   },
   state() {
@@ -127,28 +147,37 @@ window.__game = {
       winner: game.winner,
       time: game.time,
       countdown: game.countdown,
-      zoom: cam.zoom,
-      baseZoom: cam.baseZoom,
       coinsLeft: game.coins.filter((c) => !c.taken).length,
+      trackLength: game.track.length,
       trucks: game.trucks.map((t) => ({
-        x: t.x, y: t.y, angle: t.angle, score: t.score, grounded: t.grounded,
-        vx: t.chassis.getLinearVelocity().x, vy: t.chassis.getLinearVelocity().y,
-        respawns: t.respawns, screen: cam.toScreen(t.x, t.y),
+        x: t.x, z: t.z, theta: t.theta, speed: t.speed, score: t.score,
+        lat: t.lat, s: t.s, dist: t.dist, lap: game.lap(t), place: game.place(t),
+        onRoad: t.onRoad, wrongWay: t.wrongWay,
+        y: t.y, air: t.air, turbo: t.turbo, shield: t.shield, stun: t.stun, draft: t.draft, catchup: t.catchup, msg: t.msg,
       })),
-      canvas: { w: cam.w, h: cam.h },
+      boxes: game.boxes.length,
+      barricades: game.barricades.map((b) => ({ s: b.s, life: b.life })),
+      projectiles: game.projectiles.length,
+      jumps: game.track.jumps,
       pads: [input.padInfo(0), input.padInfo(1)],
+      triangles: renderer.renderer.info.render.triangles,
     };
   },
-  track: () => ({ pits: game.track.pits, goalX: game.track.goalX, startX: game.track.startX, features: game.track.features }),
-  teleport(i, x) {
-    game.trucks[i].place(x, groundAtX(x));
+  // Flytter en truck til avstand s langs banen (og sideforskyvning lat). `lap` = antall fullførte runder.
+  teleport(i, s, lat = 0, lap = 0) {
+    game.trucks[i].place(game.track, s, lat, lap * game.track.length + s);
   },
-  dropAt(i, x, y) {
-    const t = game.trucks[i];
-    t.place(x, y);
+  // Fjerner item-bokser (og eventuelt ramper) så fysikktester ikke forstyrres av tilfeldige power-ups.
+  quiet(keepJumps = false) {
+    game.boxes.forEach((b) => { b.cooldown = 1e9; });
+    if (!keepJumps) game.track.jumps = [];
   },
-  addCoin(x, y) { game.coins.push({ x, y, taken: false }); },
-  ground: (x) => groundAtX(x),
+  addBarricade(s) {
+    const p = game.track.pts[Math.round(s / 2) % game.track.count];
+    game.barricades.push({ s, x: p.x, z: p.z, theta: Math.atan2(p.tz, p.tx), lat: 0, halfWidth: 9.4, life: 14, hit: false });
+  },
+  addCoin(i, s, lat = 0) {
+    const p = game.track.pts[Math.round(s / 2) % game.track.count];
+    game.coins.push({ x: p.x + p.nx * lat, z: p.z + p.nz * lat, s, taken: false, takenBy: null });
+  },
 };
-
-function groundAtX(x) { return groundAt(game.track, x); }

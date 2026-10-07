@@ -1,315 +1,654 @@
-import { TRUCK } from './truck.js';
+import * as THREE from 'three';
+import { posAt, SPACING } from './track.js';
+import { MAX_SPEED } from './truck.js';
 
 export const PLAYER_COLORS = [
-  { body: '#e8412c', dark: '#a82513', light: '#ff8a6b' },
-  { body: '#2f7fe8', dark: '#1a4fa8', light: '#8ec1ff' },
+  { body: 0xe8412c, dark: 0xa82513 },
+  { body: 0x2f7fe8, dark: 0x1a4fa8 },
 ];
+
+// Kamera sett skrått ovenfra, bak trucken (som SNES Mario Kart, men brattere).
+const CAM_BACK = 11;
+const CAM_HEIGHT = 15;
+const CAM_LOOK_AHEAD = 6;
+
+const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+function canvasTexture(size, draw, repeat) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  draw(c.getContext('2d'), size);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); }
+  t.anisotropy = 4;
+  return t;
+}
+
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+function grassTexture() {
+  return canvasTexture(512, (g, s) => {
+    g.fillStyle = '#4c9f3c';
+    g.fillRect(0, 0, s, s);
+    // Store, myke flekker (slått gress) som gir variasjon, deretter strå.
+    for (let i = 0; i < 60; i++) {
+      g.fillStyle = Math.random() < 0.5 ? 'rgba(90,170,60,.22)' : 'rgba(30,100,40,.2)';
+      g.beginPath();
+      g.arc(rnd(0, s), rnd(0, s), rnd(20, 70), 0, 7);
+      g.fill();
+    }
+    for (let i = 0; i < 9000; i++) {
+      const l = 100 + Math.random() * 120;
+      g.strokeStyle = `hsla(${rnd(88, 125)},${rnd(45, 65)}%,${rnd(22, 48)}%,.55)`;
+      g.lineWidth = 1;
+      const x = rnd(0, s), y = rnd(0, s);
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + rnd(-2, 2), y - rnd(3, 7));
+      g.stroke();
+    }
+  }, 120);
+}
+
+function asphaltTexture() {
+  const t = canvasTexture(512, (g, s) => {
+    g.fillStyle = '#8a8d94';
+    g.fillRect(0, 0, s, s);
+    for (let i = 0; i < 26000; i++) {
+      const v = Math.floor(rnd(95, 200));
+      g.fillStyle = `rgba(${v},${v},${v + 4},${rnd(0.15, 0.5)})`;
+      g.fillRect(rnd(0, s), rnd(0, s), rnd(1, 2.4), rnd(1, 2.4));
+    }
+    // Sprekker og oljeflekker.
+    g.strokeStyle = 'rgba(30,30,34,.5)';
+    for (let i = 0; i < 6; i++) {
+      g.lineWidth = rnd(0.6, 1.4);
+      g.beginPath();
+      let x = rnd(0, s), y = rnd(0, s);
+      g.moveTo(x, y);
+      for (let k = 0; k < 6; k++) { x += rnd(-25, 25); y += rnd(10, 40); g.lineTo(x, y); }
+      g.stroke();
+    }
+    for (let i = 0; i < 5; i++) {
+      g.fillStyle = 'rgba(20,20,26,.06)';
+      g.beginPath();
+      g.ellipse(rnd(0, s), rnd(0, s), rnd(15, 40), rnd(30, 80), 0, 0, 7);
+      g.fill();
+    }
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+function tireTexture() {
+  return canvasTexture(256, (g, s) => {
+    g.fillStyle = '#18181c';
+    g.fillRect(0, 0, s, s);
+    g.fillStyle = '#2c2c33';
+    // Kraftige mønsterklosser rundt dekket.
+    for (let i = 0; i < 16; i++) {
+      const x = (i / 16) * s;
+      g.fillRect(x + 2, 8, s / 16 - 6, s * 0.34);
+      g.fillRect(x + s / 32 + 2, s * 0.58, s / 16 - 6, s * 0.34);
+    }
+    g.fillStyle = '#101013';
+    g.fillRect(0, s * 0.46, s, s * 0.08);
+  });
+}
+
+function skyTexture() {
+  const c = document.createElement('canvas');
+  c.width = 16; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#3f86d8');
+  grad.addColorStop(0.55, '#8cc6f0');
+  grad.addColorStop(1, '#dff1fb');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 16, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function numberTexture(n, color) {
+  return canvasTexture(128, (g, s) => {
+    g.fillStyle = '#f4f4f4';
+    g.beginPath();
+    g.arc(s / 2, s / 2, s * 0.45, 0, 7);
+    g.fill();
+    g.fillStyle = color;
+    g.font = `900 ${s * 0.68}px system-ui, sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(String(n), s / 2, s / 2 + 5);
+  });
+}
+
+// Flate bånd langs banen (vei, kantstein, midtstrek) med én farge per segment.
+function strip(track, latA, latB, y, colorAt, material, vScale = 1 / 14) {
+  const pos = [], col = [], uv = [];
+  const { pts, count } = track;
+  const c = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    const a = pts[i], b = pts[(i + 1) % count];
+    const color = colorAt(i);
+    if (!color) continue;
+    c.set(color);
+    const v = (p, lat) => [p.x + p.nx * lat, y, p.z + p.nz * lat];
+    const quad = [v(a, latA), v(a, latB), v(b, latB), v(a, latA), v(b, latB), v(b, latA)];
+    const va = i * SPACING * vScale, vb = (i + 1) * SPACING * vScale;
+    const uvs = [[0, va], [1, va], [1, vb], [0, va], [1, vb], [0, vb]];
+    for (const q of quad) { pos.push(...q); col.push(c.r, c.g, c.b); }
+    for (const t of uvs) uv.push(...t);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  const mat = material || new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+  mat.vertexColors = true;
+  mat.side = THREE.DoubleSide;
+  const m = new THREE.Mesh(g, mat);
+  m.receiveShadow = true;
+  return m;
+}
+
+function buildTruck(colors, number, tire) {
+  const root = new THREE.Group();
+  const chassis = new THREE.Group();
+  root.add(chassis);
+  const std = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.15, ...extra });
+  const paint = std(colors.body, { roughness: 0.3, metalness: 0.25 });
+  const dark = std(colors.dark, { roughness: 0.5 });
+  const black = std(0x1b1b1f, { roughness: 0.8, metalness: 0 });
+  const chrome = std(0xdadde4, { roughness: 0.2, metalness: 0.8 });
+  const glass = std(0x7fb8e6, { roughness: 0.05, metalness: 0.6 });
+  const lamp = std(0xfff4c2, { emissive: 0xffe9a0, emissiveIntensity: 1.2 });
+  const tail = std(0xff2a2a, { emissive: 0xff1010, emissiveIntensity: 0.8 });
+  const box = (w, h, d, mat, x, y, z, parent = chassis) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    parent.add(m);
+    return m;
+  };
+  box(4.4, 0.8, 2.4, dark, 0, 1.7, 0); // understell
+  box(2.0, 0.9, 2.5, paint, 1.2, 2.45, 0); // motorrom
+  box(2.1, 1.0, 2.4, paint, -0.9, 2.55, 0); // førerhus
+  box(0.1, 0.55, 2.0, glass, 0.15, 2.7, 0); // frontrute
+  box(0.1, 0.5, 2.0, glass, -1.96, 2.7, 0); // bakrute
+  box(2.0, 0.08, 2.2, dark, -0.9, 3.08, 0); // tak
+  box(1.9, 0.5, 2.4, dark, -2.1, 2.1, 0); // lasteplan
+  box(0.5, 0.35, 2.6, chrome, 2.35, 1.7, 0); // støtfanger
+  box(0.06, 0.45, 1.5, black, 2.22, 2.4, 0); // grill
+  for (const z of [0.85, -0.85]) {
+    box(0.08, 0.28, 0.45, lamp, 2.22, 2.62, z);
+    box(0.08, 0.22, 0.4, tail, -3.06, 2.15, z * 1.2);
+  }
+  // Lysbøyle på taket
+  const bar = box(0.25, 0.25, 2.2, black, -0.2, 3.35, 0);
+  for (const z of [-0.8, -0.3, 0.3, 0.8]) box(0.2, 0.2, 0.3, lamp, -0.2, 3.5, z, chassis);
+  bar.castShadow = true;
+  // Startnummer oppå panseret
+  const decal = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.3, 1.3),
+    new THREE.MeshBasicMaterial({ map: numberTexture(number, '#' + colors.body.toString(16).padStart(6, '0')), transparent: true }),
+  );
+  decal.rotation.x = -Math.PI / 2;
+  decal.rotation.z = -Math.PI / 2;
+  decal.position.set(1.5, 2.92, 0);
+  chassis.add(decal);
+  // Aksler
+  for (const x of [1.55, -1.55]) {
+    const ax = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 3.4, 8), black);
+    ax.rotation.x = Math.PI / 2;
+    ax.position.set(x, 1.15, 0);
+    chassis.add(ax);
+  }
+  // Store hjul
+  const wheelGeo = new THREE.CylinderGeometry(1.15, 1.15, 1.0, 28);
+  wheelGeo.rotateX(Math.PI / 2);
+  const rubber = new THREE.MeshStandardMaterial({ map: tire, roughness: 0.95, metalness: 0 });
+  const sideMat = new THREE.MeshStandardMaterial({ color: 0x222226, roughness: 0.9 });
+  const hubGeo = new THREE.CylinderGeometry(0.55, 0.55, 1.06, 14);
+  hubGeo.rotateX(Math.PI / 2);
+  const wheels = [];
+  for (const [x, z] of [[1.55, 1.6], [1.55, -1.6], [-1.55, 1.6], [-1.55, -1.6]]) {
+    const w = new THREE.Group();
+    w.position.set(x, 1.15, z);
+    // Side-/toppflater får mønster, endeflatene er svarte.
+    const tyre = new THREE.Mesh(wheelGeo, [rubber, sideMat, sideMat]);
+    tyre.castShadow = true;
+    w.add(tyre);
+    const hub = new THREE.Mesh(hubGeo, chrome);
+    w.add(hub);
+    for (const side of [-1, 1]) {
+      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 6), black);
+      bolt.rotation.x = Math.PI / 2;
+      bolt.position.z = side * 0.55;
+      w.add(bolt);
+    }
+    root.add(w);
+    wheels.push(w);
+  }
+  return { root, chassis, wheels };
+}
 
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
-    this.clouds = Array.from({ length: 14 }, (_, i) => ({ x: i * 260 + Math.random() * 120, y: 40 + Math.random() * 140, s: 0.6 + Math.random() * 0.8 }));
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+    this.renderer.setClearColor(0x10131a);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
+    this.scene = new THREE.Scene();
+    this.scene.background = skyTexture();
+    this.scene.fog = new THREE.Fog(0xcfe8f7, 140, 420);
+    this.cameras = [0, 1].map(() => new THREE.PerspectiveCamera(60, 1, 0.5, 600));
+    this.camAngle = [0, 0];
+    this.camReady = false;
+    this.trucks = [];
+    this.coinMeshes = [];
+    this.coinsRef = null;
+    this.size = { w: 1, h: 1 };
+
+    // Myk himmellys + varm sol. Solas skyggekart flyttes til hver spiller før hver visning tegnes.
+    this.scene.add(new THREE.HemisphereLight(0xbfdcff, 0x4a6a35, 1.1));
+    const sun = new THREE.DirectionalLight(0xfff0d0, 3.2);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    const sc = sun.shadow.camera;
+    sc.left = -45; sc.right = 45; sc.top = 45; sc.bottom = -45; sc.near = 10; sc.far = 320;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.06;
+    this.scene.add(sun, sun.target);
+    this.sun = sun;
   }
 
-  draw(game, cam, time) {
-    const { ctx } = this;
-    const W = cam.w, H = cam.h;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.drawSky(ctx, W, H, cam);
+  // Bygger banen, bakken og dekorasjonen en gang.
+  buildWorld(track) {
+    if (this.trackRef === track) return;
+    this.trackRef = track;
+    this.camReady = false;
+    if (this.world) {
+      this.scene.remove(this.world);
+      this.world.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        const mats = [].concat(o.material || []);
+        for (const m of mats) { m.map?.dispose(); m.bumpMap?.dispose(); m.dispose(); }
+      });
+    }
+    const scene = new THREE.Group();
+    this.scene.add(scene);
+    this.world = scene;
+    const hw = track.halfWidth;
+    const xs = track.pts.map((p) => p.x), zs = track.pts.map((p) => p.z);
+    const bb = { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
+    const cx = (bb.x0 + bb.x1) / 2, cz = (bb.z0 + bb.z1) / 2;
 
-    const z = cam.zoom;
-    ctx.setTransform(z, 0, 0, -z, W / 2 - cam.x * z, H / 2 + cam.y * z);
-    const x0 = cam.toWorldX(0) - 2, x1 = cam.toWorldX(W) + 2;
-    const yBottom = cam.y - H / 2 / z - 2;
+    const grass = grassTexture();
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.MeshStandardMaterial({ map: grass, roughness: 1, metalness: 0 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(cx, 0, cz);
+    ground.receiveShadow = true;
+    scene.add(ground);
 
-    this.drawPits(ctx, game.track, x0, x1);
-    this.drawGround(ctx, game.track, x0, x1, yBottom, z);
-    this.drawFlags(ctx, game.track, z);
-    this.drawCoins(ctx, game.coins, x0, x1, time);
-    // Draw player 2 first so player 1 is on top when they overlap.
-    for (let i = game.trucks.length - 1; i >= 0; i--) this.drawTruck(ctx, game.trucks[i], PLAYER_COLORS[i], z);
+    const asphalt = asphaltTexture();
+    asphalt.repeat.set(1, 1);
+    const road = strip(track, -hw, hw, 0.04, (i) => (i % 8 < 4 ? 0xcfd0d4 : 0xe0e1e6),
+      new THREE.MeshStandardMaterial({ map: asphalt, bumpMap: asphalt, bumpScale: 0.6, roughness: 0.85, metalness: 0 }), 1 / 16);
+    scene.add(road);
+    const curb = (a, b) => strip(track, a, b, 0.07, (i) => (Math.floor(i / 2) % 2 ? 0xe8412c : 0xf4f4f4));
+    scene.add(curb(hw, hw + 1.4), curb(-hw - 1.4, -hw));
+    scene.add(strip(track, -0.18, 0.18, 0.08, (i) => (i % 6 < 3 ? 0xf0f0f0 : null)));
+    // Hvite kantlinjer innenfor kantsteinen.
+    for (const side of [-1, 1]) scene.add(strip(track, side * (hw - 0.45), side * (hw - 0.15), 0.085, () => 0xf0f0f0));
 
-    // Player markers (constant screen size).
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    game.trucks.forEach((t, i) => {
-      const p = cam.toScreen(t.x, t.y + 2.2);
-      const s = Math.max(1, window.devicePixelRatio || 1);
-      ctx.fillStyle = PLAYER_COLORS[i].body;
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 2 * s;
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(p.x - 8 * s, p.y - 12 * s);
-      ctx.lineTo(p.x + 8 * s, p.y - 12 * s);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.font = `900 ${13 * s}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#fff';
-      ctx.fillText(`P${i + 1}`, p.x, p.y - 16 * s);
+    // Barrierer (røde og hvite blokker) langs begge sider.
+    const blockGeo = new THREE.BoxGeometry(SPACING * 1.6, 1.4, 0.9);
+    const blocks = new THREE.InstancedMesh(blockGeo, new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.05 }), Math.floor(track.count / 2) * 2);
+    blocks.castShadow = true;
+    blocks.receiveShadow = true;
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    let n = 0;
+    for (let i = 0; i < track.count; i += 2) {
+      for (const side of [-1, 1]) {
+        const p = track.pts[i];
+        const lat = side * (track.wallLat + 0.6);
+        q.setFromAxisAngle(up, -Math.atan2(p.tz, p.tx));
+        m4.compose(new THREE.Vector3(p.x + p.nx * lat, 0.7, p.z + p.nz * lat), q, new THREE.Vector3(1, 1, 1));
+        blocks.setMatrixAt(n, m4);
+        blocks.setColorAt(n, new THREE.Color((i / 2) % 2 ? 0xe8412c : 0xf4f4f4));
+        n++;
+      }
+    }
+    scene.add(blocks);
+
+    // Start/mål: rutete strek og portal.
+    const checker = canvasTexture(128, (g, s) => {
+      const cells = 8;
+      for (let x = 0; x < cells; x++) for (let y = 0; y < cells; y++) {
+        g.fillStyle = (x + y) % 2 ? '#111' : '#fff';
+        g.fillRect((x * s) / cells, (y * s) / cells, s / cells + 1, s / cells + 1);
+      }
+    });
+    const start = posAt(track, 0, 0);
+    const finish = new THREE.Group();
+    finish.position.set(start.x, 0, start.z);
+    finish.rotation.y = -start.theta;
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(3, hw * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.7 }));
+    line.receiveShadow = true;
+    line.rotation.x = -Math.PI / 2;
+    line.position.y = 0.1;
+    finish.add(line);
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.4, metalness: 0.5 });
+    for (const side of [-1, 1]) {
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.8, 9, 0.8), poleMat);
+      pole.position.set(0, 4.5, side * (hw + 2.2));
+      pole.castShadow = true;
+      finish.add(pole);
+    }
+    const banner = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, (hw + 2.2) * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.6 }));
+    banner.castShadow = true;
+    banner.position.y = 9;
+    finish.add(banner);
+    scene.add(finish);
+
+    // Trær utenfor banen.
+    const rand = mulberry(Math.floor(track.length * 1000) % 100000);
+    const spots = [];
+    for (let tries = 0; tries < 2500 && spots.length < 260; tries++) {
+      const x = bb.x0 - 90 + rand() * (bb.x1 - bb.x0 + 180), z = bb.z0 - 90 + rand() * (bb.z1 - bb.z0 + 180);
+      let ok = true;
+      for (let i = 0; i < track.count && ok; i += 2) {
+        const p = track.pts[i];
+        if ((p.x - x) ** 2 + (p.z - z) ** 2 < (track.wallLat + 9) ** 2) ok = false;
+      }
+      if (ok) spots.push([x, z, 0.8 + rand() * 0.9]);
+    }
+    const trunkGeo = new THREE.CylinderGeometry(0.5, 0.7, 3, 6);
+    trunkGeo.translate(0, 1.5, 0);
+    const leafGeo = new THREE.ConeGeometry(2.6, 7, 7);
+    leafGeo.translate(0, 6, 0);
+    const bark = canvasTexture(64, (g, s) => {
+      g.fillStyle = '#6b4423';
+      g.fillRect(0, 0, s, s);
+      for (let i = 0; i < 14; i++) { g.fillStyle = `rgba(30,15,5,${rnd(0.2, 0.5)})`; g.fillRect(rnd(0, s), 0, rnd(1, 3), s); }
+    });
+    const needles = canvasTexture(128, (g, s) => {
+      g.fillStyle = '#2f7d32';
+      g.fillRect(0, 0, s, s);
+      for (let i = 0; i < 900; i++) {
+        g.fillStyle = Math.random() < 0.5 ? 'rgba(15,70,25,.5)' : 'rgba(110,190,80,.35)';
+        g.fillRect(rnd(0, s), rnd(0, s), 2, 5);
+      }
+    });
+    const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshStandardMaterial({ map: bark, roughness: 1 }), spots.length);
+    const leaves = new THREE.InstancedMesh(leafGeo, new THREE.MeshStandardMaterial({ map: needles, roughness: 0.9 }), spots.length);
+    trunks.castShadow = leaves.castShadow = true;
+    trunks.receiveShadow = leaves.receiveShadow = true;
+    spots.forEach(([x, z, s], i) => {
+      m4.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
+      trunks.setMatrixAt(i, m4);
+      leaves.setMatrixAt(i, m4);
+    });
+    scene.add(trunks, leaves);
+
+    // Fjell i horisonten.
+    const mountainMat = new THREE.MeshStandardMaterial({ color: 0x8fa6c4, roughness: 1, flatShading: true, fog: true });
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2 + 0.3;
+      const h = 70 + rand() * 90;
+      const m = new THREE.Mesh(new THREE.ConeGeometry(70 + rand() * 50, h, 6), mountainMat);
+      m.position.set(cx + Math.cos(a) * 520, h / 2 - 2, cz + Math.sin(a) * 520);
+      scene.add(m);
+    }
+
+    // Ramper (hopp): kile med farestriper.
+    const hazard = canvasTexture(128, (g, sz) => {
+      g.fillStyle = '#f2b705';
+      g.fillRect(0, 0, sz, sz);
+      g.fillStyle = '#1b1b1f';
+      for (let i = -2; i < 6; i++) {
+        g.beginPath();
+        g.moveTo(i * 32, 0); g.lineTo(i * 32 + 16, 0); g.lineTo(i * 32 + 16 + sz, sz); g.lineTo(i * 32 + sz, sz);
+        g.fill();
+      }
+    }, 0);
+    hazard.wrapS = hazard.wrapT = THREE.RepeatWrapping;
+    for (const j of track.jumps) {
+      const shape = new THREE.Shape();
+      shape.moveTo(0, 0); shape.lineTo(j.s1 - j.s0, j.h); shape.lineTo(j.s1 - j.s0, 0); shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: hw * 2, bevelEnabled: false });
+      geo.translate(0, 0, -hw);
+      const ramp = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: hazard, roughness: 0.6 }));
+      hazard.repeat.set(0.1, 0.1);
+      ramp.castShadow = true;
+      ramp.receiveShadow = true;
+      const p = posAt(track, j.s0, 0);
+      ramp.position.set(p.x, 0.05, p.z);
+      ramp.rotation.y = -p.theta;
+      scene.add(ramp);
+    }
+  }
+
+  // Trucker og effekter lages en gang og gjenbrukes mellom løp.
+  buildActors() {
+    if (this.trucks.length) return;
+    const tire = tireTexture();
+    this.trucks = PLAYER_COLORS.map((c, i) => {
+      const t = buildTruck(c, i + 1, tire);
+      // Turbo-flammer bak og skjoldboble.
+      const flameMat = new THREE.MeshBasicMaterial({ color: 0xffa21a });
+      const flames = new THREE.Group();
+      for (const z of [-0.7, 0.7]) {
+        const f = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2.6, 8), flameMat);
+        f.rotation.z = Math.PI / 2;
+        f.position.set(-4.3, 1.9, z);
+        flames.add(f);
+      }
+      flames.visible = false;
+      t.chassis.add(flames);
+      const bubble = new THREE.Mesh(
+        new THREE.SphereGeometry(3.7, 24, 16),
+        new THREE.MeshStandardMaterial({ color: 0x7fd4ff, transparent: true, opacity: 0.28, emissive: 0x2a8fd0, emissiveIntensity: 0.7, roughness: 0.1 }),
+      );
+      bubble.position.y = 2;
+      bubble.visible = false;
+      t.root.add(bubble);
+      this.scene.add(t.root);
+      return { ...t, flames, bubble };
+    });
+    // Item-boks (roterende «?»-kube), veisperre og rakett deler geometri.
+    this.boxGeo = new THREE.BoxGeometry(2.2, 2.2, 2.2);
+    this.boxMat = new THREE.MeshStandardMaterial({
+      map: canvasTexture(128, (g, sz) => {
+        const grad = g.createLinearGradient(0, 0, sz, sz);
+        grad.addColorStop(0, '#ffe45e'); grad.addColorStop(1, '#ff8a1c');
+        g.fillStyle = grad;
+        g.fillRect(0, 0, sz, sz);
+        g.strokeStyle = '#fff';
+        g.lineWidth = 8;
+        g.strokeRect(6, 6, sz - 12, sz - 12);
+        g.fillStyle = '#fff';
+        g.font = `900 ${sz * 0.7}px system-ui, sans-serif`;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText('?', sz / 2, sz / 2 + 6);
+      }),
+      emissive: 0x5a3200, roughness: 0.35,
+    });
+    this.boxMeshes = [];
+    this.rocketMeshes = [];
+    this.barricadeMeshes = [];
+    this.stripeMat = new THREE.MeshStandardMaterial({
+      map: canvasTexture(128, (g, sz) => {
+        for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#f4f4f4' : '#e8412c'; g.fillRect((i * sz) / 8, 0, sz / 8 + 1, sz); }
+      }),
+      roughness: 0.5,
     });
   }
 
-  drawSky(ctx, W, H, cam) {
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#5fb4f0');
-    g.addColorStop(1, '#d9f0ff');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
-    // Parallax mountains, anchored just above the ground under the camera.
-    const horizon = Math.min(H * 0.95, cam.toScreen(cam.x, cam.groundRef ?? 0).y + 20);
-    const layers = [
-      { f: 0.05, c: '#a9cde6', h: 0.26, w: 0.004 },
-      { f: 0.12, c: '#8fb8a4', h: 0.15, w: 0.007 },
-    ];
-    for (const L of layers) {
-      ctx.fillStyle = L.c;
-      ctx.beginPath();
-      ctx.moveTo(0, H);
-      ctx.lineTo(0, horizon);
-      const off = cam.x * 40 * L.f;
-      for (let sx = 0; sx <= W + 10; sx += 8) {
-        const u = (sx * 1600 / Math.max(W, 1) + off) * L.w;
-        const n = Math.sin(u) * 0.5 + Math.sin(u * 2.3 + 1) * 0.3 + Math.sin(u * 5.1 + 2) * 0.2;
-        ctx.lineTo(sx, horizon - H * L.h * (0.55 + 0.45 * n));
-      }
-      ctx.lineTo(W, H);
-      ctx.fill();
-    }
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    const span = 14 * 260;
-    for (const c of this.clouds) {
-      let x = ((c.x - cam.x * 4) % span + span) % span - 200;
-      x = x * (W / 1600);
-      const y = c.y * (H / 800), r = 26 * c.s * (W / 1600);
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.arc(x + r * 1.1, y + r * 0.2, r * 0.8, 0, Math.PI * 2);
-      ctx.arc(x - r * 1.1, y + r * 0.25, r * 0.7, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  buildCoins(coins) {
+    for (const m of this.coinMeshes) this.scene.remove(m);
+    this.coinsRef = coins;
+    const geo = new THREE.CylinderGeometry(1.0, 1.0, 0.25, 18);
+    geo.rotateZ(Math.PI / 2);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0x7a5200, roughness: 0.25, metalness: 0.7 });
+    this.coinMeshes = coins.map((c) => {
+      const holder = new THREE.Group();
+      holder.position.set(c.x, 1.6, c.z);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      holder.add(mesh);
+      this.scene.add(holder);
+      return holder;
+    });
   }
 
-  drawPits(ctx, track, x0, x1) {
-    for (const p of track.pits) {
-      if (p.x1 < x0 || p.x0 > x1) continue;
-      const top = Math.max(p.rimY, p.landY) + 0.5;
-      const g = ctx.createLinearGradient(0, top, 0, p.floorY);
-      g.addColorStop(0, '#3b2a1c');
-      g.addColorStop(1, '#120b06');
-      ctx.fillStyle = g;
-      ctx.fillRect(p.x0, p.floorY, p.x1 - p.x0, top - p.floorY);
-      // Mud at the bottom
-      ctx.fillStyle = '#5a3d1a';
-      ctx.fillRect(p.x0, p.floorY, p.x1 - p.x0, 1.2);
-    }
-  }
-
-  visiblePoints(track, x0, x1) {
-    const pts = track.points;
-    let a = 0;
-    while (a < pts.length - 1 && pts[a + 1].x < x0) a++;
-    let b = a;
-    while (b < pts.length - 1 && pts[b].x < x1) b++;
-    return pts.slice(a, b + 1);
-  }
-
-  drawGround(ctx, track, x0, x1, yBottom, z) {
-    const pts = this.visiblePoints(track, x0, x1);
-    if (pts.length < 2) return;
-    const minY = Math.min(yBottom, ...pts.map((p) => p.y)) - 5;
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, minY);
-    for (const p of pts) ctx.lineTo(p.x, p.y);
-    ctx.lineTo(pts[pts.length - 1].x, minY);
-    ctx.closePath();
-    const g = ctx.createLinearGradient(0, 20, 0, -30);
-    g.addColorStop(0, '#9a6b3c');
-    g.addColorStop(1, '#5e3d20');
-    ctx.fillStyle = g;
-    ctx.fill();
-
-    // Grass edge
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (const p of pts) ctx.lineTo(p.x, p.y);
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#3f9a2e';
-    ctx.lineWidth = Math.max(0.35, 5 / z);
-    ctx.stroke();
-    ctx.strokeStyle = '#6cc443';
-    ctx.lineWidth = Math.max(0.12, 2 / z);
-    ctx.stroke();
-  }
-
-  drawFlags(ctx, track, z) {
-    const draw = (x, label, checkered) => {
-      const gy = this.groundY(track, x);
-      const h = 7;
-      ctx.fillStyle = '#eee';
-      ctx.fillRect(x - 0.12, gy, 0.24, h);
-      if (checkered) {
-        const s = 0.6;
-        for (let r = 0; r < 4; r++) for (let c = 0; c < 6; c++) {
-          ctx.fillStyle = (r + c) % 2 ? '#111' : '#fff';
-          ctx.fillRect(x + 0.12 + c * s, gy + h - (r + 1) * s, s, s);
-        }
-        // Finish line on the ground
-        for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) {
-          ctx.fillStyle = (r + c) % 2 ? '#111' : '#fff';
-          ctx.fillRect(x - 0.5 + c * 0.5, gy - 0.5 + r * 0.25, 0.5, 0.25);
-        }
-      } else {
-        ctx.fillStyle = '#ffd400';
-        ctx.fillRect(x + 0.12, gy + h - 1.6, 3, 1.6);
-      }
-      ctx.save();
-      ctx.scale(1, -1);
-      ctx.fillStyle = checkered ? '#111' : '#333';
-      ctx.font = `900 1.1px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(label, x + (checkered ? 1.9 : 1.6), -(gy + h + 0.5));
-      ctx.restore();
+  // Item-bokser, raketter og veisperrer (meshene gjenbrukes).
+  updateProps(game, time) {
+    const grow = (list, make, count) => {
+      while (list.length < count) { const m = make(); this.scene.add(m); list.push(m); }
     };
-    draw(track.startX + 3, 'START', false);
-    draw(track.goalX, 'MÅL', true);
+    grow(this.boxMeshes, () => { const m = new THREE.Mesh(this.boxGeo, this.boxMat); m.castShadow = true; return m; }, game.boxes.length);
+    game.boxes.forEach((b, k) => {
+      const m = this.boxMeshes[k];
+      m.visible = b.cooldown <= 0;
+      m.position.set(b.x, 2.4 + Math.sin(time * 3 + k) * 0.3, b.z);
+      m.rotation.set(0.4, time * 1.8 + k, 0.3);
+    });
+    this.boxMeshes.forEach((m, k) => { if (k >= game.boxes.length) m.visible = false; });
+
+    grow(this.rocketMeshes, () => {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 2.4, 10), new THREE.MeshStandardMaterial({ color: 0xe8e8ee, metalness: 0.6, roughness: 0.3 }));
+      body.rotation.z = Math.PI / 2;
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.9, 10), new THREE.MeshStandardMaterial({ color: 0xe8412c }));
+      nose.rotation.z = -Math.PI / 2;
+      nose.position.x = 1.6;
+      const fire = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.6, 8), new THREE.MeshBasicMaterial({ color: 0xffa21a }));
+      fire.rotation.z = Math.PI / 2;
+      fire.position.x = -1.9;
+      g.add(body, nose, fire);
+      g.traverse((o) => { o.castShadow = true; });
+      return g;
+    }, game.projectiles.length);
+    this.rocketMeshes.forEach((m, k) => {
+      const p = game.projectiles[k];
+      m.visible = !!p;
+      if (p) { m.position.set(p.x, 2, p.z); m.rotation.y = -p.dir; }
+    });
+
+    grow(this.barricadeMeshes, () => {
+      const g = new THREE.Group();
+      const len = 18.8;
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, len), this.stripeMat);
+      beam.position.y = 1.6;
+      const beam2 = beam.clone();
+      beam2.position.y = 3.0;
+      const legs = [-1, 1].map((sd) => {
+        const l = new THREE.Mesh(new THREE.BoxGeometry(1.2, 3.6, 1.2), new THREE.MeshStandardMaterial({ color: 0x444a55 }));
+        l.position.set(0, 1.8, sd * (len / 2 - 0.6));
+        return l;
+      });
+      g.add(beam, beam2, ...legs);
+      g.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
+      return g;
+    }, game.barricades.length);
+    this.barricadeMeshes.forEach((m, k) => {
+      const b = game.barricades[k];
+      m.visible = !!b;
+      if (b) {
+        m.position.set(b.x, 0, b.z);
+        m.rotation.y = -b.theta;
+        // Blinker når den snart forsvinner.
+        m.visible = b.life > 3 || Math.floor(time * 8) % 2 === 0;
+      }
+    });
   }
 
-  groundY(track, x) {
-    const pts = track.points;
-    for (let i = 1; i < pts.length; i++) {
-      if (pts[i].x >= x) {
-        const a = pts[i - 1], b = pts[i];
-        return b.x === a.x ? b.y : a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);
-      }
-    }
-    return 0;
+  resize(cssW, cssH) {
+    const dpr = window.devicePixelRatio || 1;
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.setSize(cssW, cssH, false);
+    this.size = { w: cssW, h: cssH };
   }
 
-  drawCoins(ctx, coins, x0, x1, time) {
-    for (const c of coins) {
-      if (c.taken || c.x < x0 || c.x > x1) continue;
-      const sx = Math.abs(Math.cos(time * 3 + c.x * 0.4)) * 0.8 + 0.2;
-      ctx.save();
-      ctx.translate(c.x, c.y);
-      ctx.scale(sx, 1);
-      ctx.beginPath();
-      ctx.arc(0, 0, 0.55, 0, Math.PI * 2);
-      ctx.fillStyle = '#f5b800';
-      ctx.fill();
-      ctx.lineWidth = 0.1;
-      ctx.strokeStyle = '#a86f00';
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(0, 0, 0.33, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffd84a';
-      ctx.fill();
-      ctx.restore();
-    }
+  updateCamera(i, truck, dt, snap) {
+    const cam = this.cameras[i];
+    const target = truck.speed > 4 ? Math.atan2(truck.vz, truck.vx) : truck.theta;
+    const goal = snap ? truck.theta : truck.theta + angleDiff(target, truck.theta) * 0.35;
+    this.camAngle[i] += angleDiff(goal, this.camAngle[i]) * (snap ? 1 : Math.min(1, 5 * dt));
+    const a = this.camAngle[i];
+    const fx = Math.cos(a), fz = Math.sin(a);
+    const frac = Math.min(1, truck.speed / MAX_SPEED);
+    cam.position.set(truck.x - fx * (CAM_BACK + frac * 2), CAM_HEIGHT + truck.y * 0.6, truck.z - fz * (CAM_BACK + frac * 2));
+    cam.lookAt(truck.x + fx * CAM_LOOK_AHEAD, truck.y * 0.4, truck.z + fz * CAM_LOOK_AHEAD);
+    cam.fov = 58 + frac * 10;
   }
 
-  drawTruck(ctx, t, col, z) {
-    const c = t.chassis.getPosition();
-    const a = t.chassis.getAngle();
-    // Suspension struts
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 0.18;
-    for (const [i, w] of t.wheels.entries()) {
-      const wp = w.getPosition();
-      const side = i === 0 ? -1 : 1;
-      const ax = c.x + Math.cos(a) * side * 0.9 - Math.sin(a) * -0.1;
-      const ay = c.y + Math.sin(a) * side * 0.9 + Math.cos(a) * -0.1;
-      ctx.beginPath();
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(wp.x, wp.y);
-      ctx.stroke();
-    }
-    // Body
-    ctx.save();
-    ctx.translate(c.x, c.y);
-    ctx.rotate(a);
-    ctx.fillStyle = '#2b2b2b';
-    ctx.fillRect(-1.6, -0.45, 3.2, 0.25); // frame
-    ctx.fillStyle = col.body;
-    roundRect(ctx, -1.8, -0.3, 3.6, 0.65, 0.15);
-    ctx.fill();
-    ctx.fillStyle = col.dark;
-    ctx.fillRect(-1.8, -0.3, 3.6, 0.14);
-    // Cabin
-    ctx.beginPath();
-    ctx.moveTo(-0.75, 0.33);
-    ctx.lineTo(0.8, 0.33);
-    ctx.lineTo(0.5, 1.05);
-    ctx.lineTo(-0.6, 1.05);
-    ctx.closePath();
-    ctx.fillStyle = col.body;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-0.52, 0.42);
-    ctx.lineTo(0.62, 0.42);
-    ctx.lineTo(0.42, 0.93);
-    ctx.lineTo(-0.44, 0.93);
-    ctx.closePath();
-    ctx.fillStyle = '#bfe6ff';
-    ctx.fill();
-    ctx.fillStyle = col.light;
-    ctx.fillRect(1.55, 0.05, 0.25, 0.18); // headlight
-    ctx.fillStyle = '#ffcc00';
-    ctx.fillRect(-1.3, 0.12, 1.0, 0.1); // stripe
-    ctx.fillRect(0.9, 0.12, 0.5, 0.1);
-    ctx.restore();
+  draw(game, dt, time) {
+    this.buildActors();
+    this.buildWorld(game.track);
+    if (this.coinsRef !== game.coins || this.coinMeshes.length !== game.coins.length) this.buildCoins(game.coins);
+    const snap = !this.camReady;
+    this.camReady = true;
 
-    for (const w of t.wheels) {
-      const p = w.getPosition(), r = TRUCK.wheelRadius;
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(w.getAngle());
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fillStyle = '#1b1b1b';
-      ctx.fill();
-      // Treads
-      ctx.fillStyle = '#333';
-      for (let k = 0; k < 12; k++) {
-        ctx.save();
-        ctx.rotate((k / 12) * Math.PI * 2);
-        ctx.fillRect(r - 0.12, -0.08, 0.14, 0.16);
-        ctx.restore();
-      }
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#9aa0a6';
-      ctx.fill();
-      ctx.strokeStyle = '#5b6168';
-      ctx.lineWidth = 0.07;
-      for (let k = 0; k < 5; k++) {
-        const ang = (k / 5) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.cos(ang) * r * 0.48, Math.sin(ang) * r * 0.48);
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.14, 0, Math.PI * 2);
-      ctx.fillStyle = col.body;
-      ctx.fill();
-      ctx.restore();
+    game.trucks.forEach((t, i) => {
+      const m = this.trucks[i];
+      m.root.position.set(t.x, t.y, t.z);
+      m.root.rotation.y = -t.theta;
+      const bounce = Math.sin(time * 40 + i) * 0.04 * Math.min(1, t.speed / 20) * (t.onRoad ? 0.4 : 2.5);
+      m.chassis.position.y = bounce;
+      m.chassis.rotation.x = t.roll;
+      // Nesa peker opp på vei opp av rampen og ned igjen mot landing.
+      m.chassis.rotation.z = t.air ? Math.max(-0.5, Math.min(0.5, t.vy * 0.04)) : Math.max(0, Math.min(0.35, t.rampVy * 0.035));
+      m.flames.visible = t.turbo > 0;
+      if (m.flames.visible) m.flames.scale.set(0.8 + Math.random() * 0.5, 1, 1);
+      m.bubble.visible = t.shield > 0 && (t.shield > 2 || Math.floor(time * 8) % 2 === 0);
+      m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
+      this.updateCamera(i, t, dt, snap);
+    });
+    game.coins.forEach((c, k) => {
+      const holder = this.coinMeshes[k];
+      holder.visible = !c.taken;
+      holder.rotation.y = time * 3 + k;
+    });
+
+    this.updateProps(game, time);
+
+    const { renderer } = this;
+    const { w, h } = this.size;
+    const half = Math.floor((w - 4) / 2);
+    renderer.setScissorTest(false);
+    renderer.clear();
+    renderer.setScissorTest(true);
+    for (let i = 0; i < 2; i++) {
+      const x = i === 0 ? 0 : w - half;
+      renderer.setViewport(x, 0, half, h);
+      renderer.setScissor(x, 0, half, h);
+      this.cameras[i].aspect = half / h;
+      this.cameras[i].updateProjectionMatrix();
+      const tr = game.trucks[i];
+      this.sun.target.position.set(tr.x, 0, tr.z);
+      this.sun.position.set(tr.x - 70, 120, tr.z + 45);
+      renderer.render(this.scene, this.cameras[i]);
     }
   }
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
+function mulberry(seed) {
+  let a = seed;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }

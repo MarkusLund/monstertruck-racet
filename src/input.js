@@ -1,17 +1,19 @@
-// Input: keyboard (two players on one keyboard) + up to two gamepads (PS5 DualSense).
+// Input: tastatur (to spillere på ett tastatur) + opptil to kontrollere (PS5 DualSense).
 // Each player's input is the combination of their keys and their assigned controller,
 // so keyboard and controllers can be mixed freely.
 
 export const KEYS = {
-  0: { accel: 'KeyD', reverse: 'KeyA', jump: 'KeyW' },
-  1: { accel: 'ArrowRight', reverse: 'ArrowLeft', jump: 'ArrowUp' },
+  0: { accel: 'KeyW', left: 'KeyA', right: 'KeyD' },
+  1: { accel: 'ArrowUp', left: 'ArrowLeft', right: 'ArrowRight' },
 };
 
 // Standard Gamepad mapping (Chrome/Safari/Firefox on macOS map DualSense to this).
 const BTN_CROSS = 0; // X
-const BTN_L2 = 6;
 const BTN_R2 = 7;
 const BTN_OPTIONS = 9;
+const BTN_DPAD_LEFT = 14;
+const BTN_DPAD_RIGHT = 15;
+const STICK_DEADZONE = 0.12;
 
 const CONFIRM_KEYS = new Set(['Enter', 'NumpadEnter', 'Space']);
 
@@ -76,21 +78,21 @@ export class Input {
     return typeof b === 'object' ? Math.max(b.value || 0, b.pressed ? 1 : 0) : b;
   }
 
-  // Returns { throttle: -1..1, jump: bool (edge), usingPad: bool }
+  // Returns { throttle: 0..1, steer: -1..1 (positiv = høyre) }
   player(i) {
     const k = KEYS[i];
     const pad = this.pads[i];
-    let accel = this.down.has(k.accel) ? 1 : 0;
-    let reverse = this.down.has(k.reverse) ? 1 : 0;
-    let jump = this.pressed.has(k.jump);
+    let throttle = this.down.has(k.accel) ? 1 : 0;
+    let steer = (this.down.has(k.right) ? 1 : 0) - (this.down.has(k.left) ? 1 : 0);
     if (pad) {
       const r2 = this.padButton(pad, BTN_R2);
-      const l2 = this.padButton(pad, BTN_L2);
-      accel = Math.max(accel, r2 > 0.04 ? r2 : 0);
-      reverse = Math.max(reverse, l2 > 0.04 ? l2 : 0);
-      jump = jump || this.padEdges.get(pad.index)?.has(BTN_CROSS);
+      throttle = Math.max(throttle, r2 > 0.04 ? r2 : 0);
+      const x = pad.axes[0] || 0;
+      const stick = Math.abs(x) > STICK_DEADZONE ? (x - Math.sign(x) * STICK_DEADZONE) / (1 - STICK_DEADZONE) : 0;
+      const dpad = this.padButton(pad, BTN_DPAD_RIGHT) - this.padButton(pad, BTN_DPAD_LEFT);
+      steer = Math.max(-1, Math.min(1, steer + stick + dpad));
     }
-    return { throttle: accel - reverse, jump: !!jump };
+    return { throttle, steer };
   }
 
   // "Start / confirm" from keyboard or any controller.

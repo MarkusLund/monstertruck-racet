@@ -1,142 +1,223 @@
-// Track geometry. Coordinates are in meters, y points up.
-// The ground is one continuous polyline; pits are notches (walls + floor) in it.
+// Banen: en lukket bane definert av en Catmull-Rom-kurve, resamplet til jevnt fordelte punkter.
+// Koordinater er (x, z) i three.js-verdenen sett ovenfra. Sidelengs forskyvning ("lat") er positiv mot høyre.
 
-class Builder {
-  constructor() {
-    this.pts = [{ x: -20, y: 30 }, { x: -20, y: 0 }, { x: 0, y: 0 }];
-    this.pits = [];
-    this.features = [];
-  }
-  get x() { return this.pts[this.pts.length - 1].x; }
-  get y() { return this.pts[this.pts.length - 1].y; }
-  add(x, y) { this.pts.push({ x, y }); }
+export const HALF_WIDTH = 9; // halve veibredden
+export const WALL_LAT = HALF_WIDTH + 6; // avstand fra midtlinjen til barrieren
+export const SPACING = 2; // avstand mellom banepunktene
 
-  // Curve from current point over dx; f(t) maps 0..1 -> 0..1 of dy.
-  curve(dx, dy, f, step = 0.5) {
-    const x0 = this.x, y0 = this.y;
-    const n = Math.max(2, Math.ceil(dx / step));
-    for (let i = 1; i <= n; i++) {
-      const t = i / n;
-      this.add(x0 + dx * t, y0 + dy * f(t));
-    }
-    return this;
-  }
-  flat(len) { return this.curve(len, 0, (t) => t, 4); }
-  line(dx, dy) { return this.curve(dx, dy, (t) => t); }
-  smooth(dx, dy) { return this.curve(dx, dy, (t) => (1 - Math.cos(Math.PI * t)) / 2); }
-  // Concave ramp that gets steeper toward the tip - launches the truck.
-  kicker(len, h) {
-    this.features.push({ type: h >= 7 ? 'bigramp' : 'ramp', x: this.x + len, h });
-    return this.curve(len, h, (t) => t * t, 0.4);
-  }
-  hills(len, amp, waves) {
-    return this.curve(len, 0, (t) => 0, 0.5).reshapeLast(len, (t) => amp * (1 - Math.cos(2 * Math.PI * waves * t)) / 2);
-  }
-  reshapeLast(len, g) {
-    const x1 = this.x, x0 = x1 - len, base = this.y;
-    for (const p of this.pts) {
-      if (p.x > x0 && p.x <= x1) p.y = base + g((p.x - x0) / len);
-    }
-    return this;
-  }
-  bumps(count, width, h) {
-    for (let i = 0; i < count; i++) this.curve(width, 0, () => 0, 0.25).reshapeLast(width, (t) => h * Math.sin(Math.PI * t));
-    return this;
-  }
-  // A pit: vertical walls and a floor. Trucks that fall in respawn at `runway` meters before it.
-  pit(width, depth = 10, landDy = 0, runway = 30) {
-    const x0 = this.x, rimY = this.y;
-    const floorY = Math.min(rimY, rimY + landDy) - depth;
-    this.add(x0 + 0.3, floorY);
-    this.add(x0 + width - 0.3, floorY);
-    this.add(x0 + width, rimY + landDy);
-    this.pits.push({ x0, x1: x0 + width, rimY, landY: rimY + landDy, floorY, respawnX: x0 - runway });
-    return this;
-  }
+const CONTROL = [
+  [0, 0], [60, -5], [120, -10], [170, 20], [185, 75], [150, 120], [95, 125], [60, 95],
+  [20, 110], [-30, 140], [-85, 130], [-110, 85], [-90, 40], [-50, 25], [-28, 8],
+];
+
+function catmull(p0, p1, p2, p3, t) {
+  const t2 = t * t, t3 = t2 * t;
+  return [0, 1].map((k) => 0.5 * (
+    2 * p1[k] + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2
+    + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3));
 }
 
-export function buildTrack() {
-  const b = new Builder();
-  b.flat(45);
-  b.bumps(5, 4, 0.5);
-  b.flat(15);
-  b.kicker(8, 1.6).line(10, -1.6);
-  b.flat(20);
-  b.hills(90, 3.5, 3);
-  b.flat(15);
-  b.kicker(16, 4).smooth(22, -4);
-  b.flat(35);
-  b.kicker(6, 1).pit(8, 10, -1).flat(25); // pit 1
-  b.smooth(30, 16).flat(14).smooth(36, -16); // steep hill
-  b.flat(20);
-  b.bumps(8, 3, 0.6);
-  b.flat(35);
-  b.kicker(24, 8).pit(13, 12, -3, 40).smooth(22, -5); // big jump over a pit
-  b.flat(30);
-  b.hills(70, 5, 2);
-  b.flat(10);
-  b.smooth(32, 18).flat(10); // very steep hill
-  b.smooth(20, -6).kicker(5, 0.8).smooth(20, -6.8).kicker(5, 0.8).smooth(20, -6.8);
-  b.flat(35);
-  b.kicker(6, 1.2).pit(10, 10, -1.2).flat(25); // pit 3
-  b.kicker(35, 13).line(3, 0).smooth(45, -13); // huge ramp
-  b.flat(30);
-  b.bumps(6, 5, 1);
-  b.hills(60, 3, 3);
-  b.flat(35);
-  b.kicker(7, 1.5).pit(11, 12, -1.5).flat(20); // pit 4
-  b.smooth(20, 8).flat(8).smooth(20, -8);
-  b.bumps(10, 2.5, 0.4);
-  b.flat(30);
-  const goalX = b.x + 10;
-  b.flat(70);
-  b.add(b.x, b.y + 30); // end wall
-  return {
-    points: b.pts,
-    pits: b.pits,
-    features: b.features,
-    startX: 6,
-    goalX,
-    endX: b.x,
+function fromControl(CONTROL) {
+  const n = CONTROL.length;
+  const dense = [];
+  for (let i = 0; i < n; i++) {
+    const [a, b, c, d] = [-1, 0, 1, 2].map((o) => CONTROL[(i + o + n) % n]);
+    for (let k = 0; k < 40; k++) dense.push(catmull(a, b, c, d, k / 40));
+  }
+  // Buelengde langs den tette kurven.
+  const cum = [0];
+  for (let i = 1; i <= dense.length; i++) {
+    const a = dense[i - 1], b = dense[i % dense.length];
+    cum.push(cum[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]));
+  }
+  const total = cum[cum.length - 1];
+  const count = Math.round(total / SPACING);
+  const raw = [];
+  let j = 0;
+  for (let i = 0; i < count; i++) {
+    const target = (i / count) * total;
+    while (cum[j + 1] < target) j++;
+    const f = (target - cum[j]) / (cum[j + 1] - cum[j]);
+    const a = dense[j], b = dense[(j + 1) % dense.length];
+    raw.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+  }
+  return raw;
+}
+
+function frames(raw) {
+  const count = raw.length;
+  return raw.map((p, i) => {
+    const a = raw[(i - 1 + count) % count], b = raw[(i + 1) % count];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const tx = (b[0] - a[0]) / len, tz = (b[1] - a[1]) / len;
+    return { x: p[0], z: p[1], tx, tz, nx: -tz, nz: tx, s: i * SPACING };
+  });
+}
+
+// Krumning (rad per meter) i hvert punkt.
+function curvature(pts) {
+  const n = pts.length;
+  return pts.map((p, i) => {
+    const q = pts[(i + 1) % n];
+    return Math.abs(Math.atan2(p.tx * q.tz - p.tz * q.tx, p.tx * q.tx + p.tz * q.tz)) / SPACING;
+  });
+}
+
+function finish(raw) {
+  const count = raw.length;
+  return { pts: frames(raw), count, length: count * SPACING, halfWidth: HALF_WIDTH, wallLat: WALL_LAT, jumps: [] };
+}
+
+// Tilfeldig kontrollpunktsett: en uregelmessig, strukket ring med varierende radius.
+function randomControl(rand) {
+  const n = 9 + Math.floor(rand() * 4);
+  const base = 95 + rand() * 45;
+  const sx = 1 + rand() * 0.5, sz = 0.8 + rand() * 0.3;
+  const flip = rand() < 0.5 ? 1 : -1;
+  const pts = [];
+  for (let k = 0; k < n; k++) {
+    const ang = ((k + (rand() - 0.5) * 0.35) / n) * Math.PI * 2;
+    const r = base * (0.62 + rand() * 0.6);
+    pts.push([Math.cos(ang) * r * sx, Math.sin(ang) * r * sz * flip]);
+  }
+  return pts;
+}
+
+function valid(track) {
+  const { pts, count, length } = track;
+  if (length < 600 || length > 1250) return false;
+  const k = curvature(pts);
+  if (Math.max(...k) > 1 / 22) return false; // for krappe svinger
+  // Ulike deler av banen må ikke ligge for nær hverandre.
+  const minGap = 2 * WALL_LAT + 4;
+  const skip = Math.ceil((minGap * 2.2) / SPACING);
+  for (let i = 0; i < count; i += 2) {
+    for (let j = i + skip; j < count; j += 2) {
+      if (count - (j - i) < skip) continue;
+      if ((pts[i].x - pts[j].x) ** 2 + (pts[i].z - pts[j].z) ** 2 < minGap * minGap) return false;
+    }
+  }
+  return true;
+}
+
+// Flytter startpunktet til et rett stykke, så oppstillingen alltid står på en rett strekning.
+function rotateToStraight(track) {
+  const k = curvature(track.pts);
+  const { count } = track;
+  let best = 0, bestV = Infinity;
+  const win = 25;
+  for (let i = 0; i < count; i++) {
+    let v = 0;
+    for (let o = -win; o <= win; o++) v += k[(i + o + count) % count];
+    if (v < bestV) { bestV = v; best = i; }
+  }
+  const raw = track.pts.map((_, i) => track.pts[(best + i) % count]).map((p) => [p.x, p.z]);
+  return finish(raw);
+}
+
+// Ramper (hopp) på rette stykker. Rampen stiger over len meter og slutter brått, så trucker som kommer i fart letter.
+export const RAMP_LEN = 10;
+export const RAMP_HEIGHT = 2.8;
+function placeJumps(track, rand) {
+  const k = curvature(track.pts);
+  const { count } = track;
+  const want = 2 + Math.floor(rand() * 3);
+  const cand = [];
+  for (let i = 40; i < count - 25; i++) {
+    let m = 0;
+    for (let o = -6; o <= 22; o++) m = Math.max(m, k[(i + o + count) % count]);
+    if (m < 0.011) cand.push(i);
+  }
+  const chosen = [];
+  for (let tries = 0; tries < 200 && chosen.length < want && cand.length; tries++) {
+    const i = cand[Math.floor(rand() * cand.length)];
+    if (chosen.every((c) => Math.abs(c - i) * SPACING > 110 && count - Math.abs(c - i) > 55)) chosen.push(i);
+  }
+  chosen.sort((a, b) => a - b);
+  track.jumps = chosen.map((i) => ({ s0: i * SPACING, s1: i * SPACING + RAMP_LEN, h: RAMP_HEIGHT }));
+}
+
+export function buildTrack(rand = null) {
+  let track = null;
+  if (rand) {
+    for (let tries = 0; tries < 200 && !track; tries++) {
+      const t = rotateToStraight(finish(fromControl(randomControl(rand))));
+      if (valid(t)) track = t;
+    }
+  }
+  if (!track) track = finish(fromControl(CONTROL));
+  placeJumps(track, rand || (() => 0.37));
+  return track;
+}
+
+// Terrenghøyde (ramper) i punktet s langs banen med sideforskyvning lat.
+export function heightAt(track, s, lat) {
+  if (Math.abs(lat) > track.halfWidth) return 0;
+  const w = wrapS(track, s);
+  for (const j of track.jumps) if (w >= j.s0 && w < j.s1) return j.h * ((w - j.s0) / (j.s1 - j.s0));
+  return 0;
+}
+
+// Rader med item-bokser (tre og tre) som ikke ligger på ramper.
+export function placeItemBoxes(track) {
+  const rows = 4;
+  const boxes = [];
+  for (let r = 0; r < rows; r++) {
+    let s = ((r + 0.5) / rows) * track.length;
+    for (const j of track.jumps) if (s > j.s0 - 14 && s < j.s1 + 14) s = j.s1 + 16;
+    for (const lat of [-5, 0, 5]) {
+      const p = posAt(track, s, lat);
+      boxes.push({ x: p.x, z: p.z, s, cooldown: 0 });
+    }
+  }
+  return boxes;
+}
+
+export function wrapS(track, s) {
+  return ((s % track.length) + track.length) % track.length;
+}
+
+// Posisjon og retning (vinkel i x-z-planet) for avstand s langs banen og sideforskyvning lat.
+export function posAt(track, s, lat = 0) {
+  const f = wrapS(track, s) / SPACING;
+  const i = Math.floor(f) % track.count;
+  const a = track.pts[i], b = track.pts[(i + 1) % track.count];
+  const u = f - Math.floor(f);
+  const x = a.x + (b.x - a.x) * u, z = a.z + (b.z - a.z) * u;
+  const tx = a.tx + (b.tx - a.tx) * u, tz = a.tz + (b.tz - a.tz) * u;
+  const len = Math.hypot(tx, tz);
+  return { x: x - (tz / len) * lat, z: z + (tx / len) * lat, theta: Math.atan2(tz, tx), index: i };
+}
+
+// Nærmeste banepunkt. Med `hint` søkes bare i nærheten av forrige indeks (raskt og stabilt).
+export function nearest(track, x, z, hint = -1, window = 60) {
+  const { pts, count } = track;
+  let best = -1, bestD = Infinity;
+  const test = (i) => {
+    const p = pts[i];
+    const d = (p.x - x) ** 2 + (p.z - z) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
   };
+  if (hint < 0) for (let i = 0; i < count; i++) test(i);
+  else for (let o = -window; o <= window; o++) test((hint + o + count) % count);
+  const p = pts[best];
+  const dx = x - p.x, dz = z - p.z;
+  return { index: best, lat: dx * p.nx + dz * p.nz, along: dx * p.tx + dz * p.tz, s: p.s, tx: p.tx, tz: p.tz, nx: p.nx, nz: p.nz };
 }
 
-// Ground height (top surface) at x.
-export function groundAt(track, x) {
-  const p = track.points;
-  let lo = 0, hi = p.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (p[mid].x <= x) lo = mid; else hi = mid;
-  }
-  const a = p[lo], b = p[hi];
-  if (b.x === a.x) return Math.max(a.y, b.y);
-  const t = Math.min(1, Math.max(0, (x - a.x) / (b.x - a.x)));
-  return a.y + (b.y - a.y) * t;
-}
-
-export function slopeAt(track, x) {
-  return Math.atan2(groundAt(track, x + 1) - groundAt(track, x - 1), 2);
-}
-
-export function pitAt(track, x) {
-  return track.pits.find((p) => x > p.x0 && x < p.x1) || null;
-}
-
-// Random coin placement (new layout every race).
+// Mynter i grupper langs banen: rette linjer og slalåm.
 export function placeCoins(track, rand = Math.random) {
   const coins = [];
-  let x = 25;
-  while (x < track.goalX - 8) {
-    x += 7 + rand() * 12;
-    const nearPit = track.pits.some((p) => x > p.x0 - 3 && x < p.x1 + 3);
-    if (nearPit || x >= track.goalX - 5) continue;
-    // Groups of 1-4 coins, most at driving height, some higher (need a jump).
-    const n = 1 + Math.floor(rand() * 4);
-    const lift = rand() < 0.3 ? 2.6 + rand() * 1.2 : 1.3;
-    for (let i = 0; i < n && x < track.goalX - 5; i++) {
-      coins.push({ x, y: groundAt(track, x) + lift, taken: false });
-      x += 1.6;
+  const groups = 16;
+  for (let g = 0; g < groups; g++) {
+    const s0 = ((g + 0.2 + 0.6 * rand()) / groups) * track.length;
+    if (s0 < 40 || s0 > track.length - 30) continue;
+    const slalom = rand() < 0.5;
+    const base = (rand() * 2 - 1) * 4;
+    for (let k = 0; k < 5; k++) {
+      const lat = slalom ? Math.sin(k * 1.4) * 5 : base;
+      const p = posAt(track, s0 + k * 5, lat);
+      coins.push({ x: p.x, z: p.z, s: s0 + k * 5, taken: false, takenBy: null });
     }
   }
   return coins;

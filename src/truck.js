@@ -1,127 +1,176 @@
-import { Vec2, Box, Circle, Polygon, WheelJoint } from 'planck';
+import { nearest, posAt, wrapS, heightAt, HALF_WIDTH } from './track.js';
 
-export const CAT_GROUND = 0x0001;
-export const CAT_TRUCK = 0x0002;
+// Arkade-fysikk: bare gass og sving. Trucken har en fartsvektor med litt sidegrep (litt sladd i svingene).
+export const MAX_SPEED = 40;
+const ACCEL = 24;
+const OFFROAD_MAX = 17;
+const TURN_RATE = 1.9; // rad/s ved full sving
+const GRIP = 5; // hvor raskt sidefarten dør ut
+const GRAVITY = 28;
 
-// Trucks only collide with the ground, never with each other.
-const truckFilter = { filterCategoryBits: CAT_TRUCK, filterMaskBits: CAT_GROUND };
+export const COIN_ACCEL = 0.03; // ekstra akselerasjon per mynt
+export const COIN_ACCEL_MAX = 0.6;
+export const TURBO_TIME = 2.2;
+export const SHIELD_TIME = 10;
+export const STUN_TIME = 1.4;
 
-export const TRUCK = {
-  wheelRadius: 0.72,
-  wheelOffsetX: 1.3,
-  wheelOffsetY: -0.8,
-  maxWheelSpeed: 34, // rad/s forward
-  maxReverseSpeed: 16,
-  motorTorque: 42, // per wheel
-  brakeTorque: 30,
-  airTorque: 14,
-  jumpVelocity: 5.5, // m/s added upwards (modest hop, keeps momentum)
-  jumpCooldown: 0.45,
-};
+const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
 export class Truck {
-  constructor(world, id, x, y) {
+  constructor(id) {
     this.id = id;
-    this.world = world;
     this.score = 0;
     this.finished = false;
-    this.jumpTimer = 0;
-    this.flipTimer = 0;
-    this.airTime = 0;
-    this.respawns = 0;
-    this.maxX = x;
-
-    const chassis = world.createBody({ type: 'dynamic', position: Vec2(x, y), angularDamping: 0.6 });
-    chassis.createFixture({ shape: new Box(1.75, 0.32), density: 2.2, friction: 0.4, ...truckFilter });
-    chassis.createFixture({
-      shape: new Polygon([Vec2(-0.7, 0.3), Vec2(0.75, 0.3), Vec2(0.45, 1.0), Vec2(-0.55, 1.0)]),
-      density: 0.4, friction: 0.4, ...truckFilter,
-    });
-    // Low ballast keeps the center of mass down so the truck is not too tippy.
-    chassis.createFixture({ shape: new Circle(Vec2(0, -0.35), 0.3), density: 9, friction: 0.2, ...truckFilter });
-    this.chassis = chassis;
-
-    this.wheels = [];
-    this.joints = [];
-    for (const side of [-1, 1]) {
-      const wp = Vec2(x + side * TRUCK.wheelOffsetX, y + TRUCK.wheelOffsetY);
-      const wheel = world.createBody({ type: 'dynamic', position: wp, angularDamping: 0.3 });
-      wheel.createFixture({ shape: new Circle(TRUCK.wheelRadius), density: 1.1, friction: 1.6, restitution: 0.05, ...truckFilter });
-      const joint = world.createJoint(new WheelJoint({
-        enableMotor: true, motorSpeed: 0, maxMotorTorque: 1,
-        frequencyHz: 4.2, dampingRatio: 0.65,
-      }, chassis, wheel, wp, Vec2(0, 1)));
-      this.wheels.push(wheel);
-      this.joints.push(joint);
-    }
-    this.bodies = [chassis, ...this.wheels];
   }
 
-  get x() { return this.chassis.getPosition().x; }
-  get y() { return this.chassis.getPosition().y; }
-  get angle() { return this.chassis.getAngle(); }
-
-  touchesGround(body) {
-    for (let ce = body.getContactList(); ce; ce = ce.next) {
-      if (ce.contact.isTouching() && ce.other.getUserData() === 'ground') return true;
-    }
-    return false;
+  // s: avstand langs banen, lat: sideforskyvning, dist: akkumulert distanse (negativ før startstreken).
+  place(track, s, lat = 0, dist = s) {
+    const p = posAt(track, s, lat);
+    this.x = p.x;
+    this.z = p.z;
+    this.y = 0;
+    this.vy = 0;
+    this.air = false;
+    this.rampVy = 0;
+    this.landed = false;
+    this.theta = p.theta;
+    this.vx = 0;
+    this.vz = 0;
+    this.roll = 0;
+    this.wheelSpin = 0;
+    this.hint = p.index;
+    this.wrongWay = 0;
+    // Effekter
+    this.turbo = 0;
+    this.shield = 0;
+    this.stun = 0;
+    this.draft = 0; // 0..1 slipstream
+    this.catchup = 0; // 0..1 strikk-effekt for den som ligger bak
+    this.msg = '';
+    this.msgTimer = 0;
+    this.dist = dist;
+    this.s = wrapS(track, s);
+    this.locate(track, false);
   }
 
-  get grounded() { return this.wheels.some((w) => this.touchesGround(w)); }
+  get speed() { return Math.hypot(this.vx, this.vz); }
 
-  control(input, dt, locked) {
-    const t = locked ? 0 : Math.max(-1, Math.min(1, input.throttle));
-    const grounded = this.grounded;
-    // Forward speed along the truck (positive = driving right).
-    const fwd = -this.wheels.reduce((a, w) => a + w.getAngularVelocity(), 0) / 2 * TRUCK.wheelRadius;
-    const braking = (t < -0.02 && fwd > 1.5) || (t > 0.02 && fwd < -1.5);
-    for (const j of this.joints) {
-      if (braking) {
-        // Pressing the opposite pedal brakes first, then drives the other way.
-        j.setMotorSpeed(0);
-        j.setMaxMotorTorque(TRUCK.brakeTorque * Math.abs(t));
-      } else if (Math.abs(t) > 0.02) {
-        j.setMotorSpeed(t > 0 ? -TRUCK.maxWheelSpeed * t : -TRUCK.maxReverseSpeed * t);
-        j.setMaxMotorTorque(TRUCK.motorTorque * (0.35 + 0.65 * Math.abs(t)));
+  locate(track, accumulate = true) {
+    const n = nearest(track, this.x, this.z, this.hint);
+    this.hint = n.index;
+    this.lat = n.lat;
+    this.onRoad = Math.abs(n.lat) <= HALF_WIDTH;
+    this.nearest = n;
+    const sNew = n.s + n.along;
+    if (accumulate) {
+      let ds = sNew - this.s;
+      ds -= Math.round(ds / track.length) * track.length;
+      this.dist += ds;
+    }
+    this.s = wrapS(track, sNew);
+    return n;
+  }
+
+  say(text, time = 1.6) {
+    this.msg = text;
+    this.msgTimer = time;
+  }
+
+  step(input, dt, track, locked = false) {
+    this.turbo = Math.max(0, this.turbo - dt);
+    this.shield = Math.max(0, this.shield - dt);
+    this.stun = Math.max(0, this.stun - dt);
+    this.msgTimer = Math.max(0, this.msgTimer - dt);
+    this.landed = false;
+
+    const stunned = this.stun > 0;
+    const throttle = locked || stunned ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
+    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer));
+    const fx = Math.cos(this.theta), fz = Math.sin(this.theta);
+    const sx = -fz, sz = fx;
+    let vf = this.vx * fx + this.vz * fz;
+    let vs = this.vx * sx + this.vz * sz;
+
+    const air = this.air;
+    // Slipstream og strikk gir litt ekstra topp- og akselerasjon; turbo gir mye.
+    const maxMul = 1 + (this.turbo > 0 ? 0.45 : 0) + 0.16 * this.draft + 0.1 * this.catchup;
+    // Hver mynt gir litt bedre akselerasjon (opptil +60 %).
+    const coinMul = Math.min(COIN_ACCEL_MAX, this.score * COIN_ACCEL);
+    const accMul = 1 + (this.turbo > 0 ? 1.4 : 0) + 0.6 * this.draft + 0.5 * this.catchup + coinMul;
+    const max = (this.onRoad ? MAX_SPEED : OFFROAD_MAX) * (0.35 + 0.65 * throttle) * maxMul;
+    if (!air) {
+      if (vf < max) vf = Math.min(max, vf + ACCEL * accMul * throttle * dt);
+      else vf -= (vf - max) * (this.onRoad ? 1.2 : 3) * dt;
+      vf -= vf * (throttle > 0 ? 0.12 : 0.7) * dt; // rullemotstand, mer uten gass
+      if (stunned) vf *= Math.exp(-2.4 * dt);
+    }
+    vs *= Math.exp(-GRIP * (air ? 0.1 : 1) * dt);
+
+    const speedFrac = Math.min(1, Math.abs(vf) / MAX_SPEED);
+    let turn = steer * TURN_RATE * Math.min(1, Math.abs(vf) / 8) * (1 - 0.35 * Math.min(1, speedFrac));
+    if (air) turn *= 0.4;
+    this.theta += turn * dt * Math.sign(vf || 1);
+    if (stunned) this.theta += 9 * dt; // trucken spinner rundt
+
+    // Fartsvektoren roteres med trucken: behold sidefarten fra før rotasjonen.
+    const nfx = Math.cos(this.theta), nfz = Math.sin(this.theta);
+    if (stunned) {
+      // Sladd: fartsvektoren følger ikke den spinnende nesen.
+      this.vx = fx * vf - fz * vs;
+      this.vz = fz * vf + fx * vs;
+    } else {
+      this.vx = nfx * vf - nfz * vs;
+      this.vz = nfz * vf + nfx * vs;
+    }
+    this.x += this.vx * dt;
+    this.z += this.vz * dt;
+
+    const n = this.locate(track);
+
+    // Barriere: skyv tilbake, fjern farten utover og drei trucken mot banens retning så den aldri setter seg fast.
+    if (Math.abs(n.lat) > track.wallLat) {
+      const side = Math.sign(n.lat);
+      const over = Math.abs(n.lat) - track.wallLat;
+      this.x -= n.nx * over * side;
+      this.z -= n.nz * over * side;
+      const out = (this.vx * n.nx + this.vz * n.nz) * side;
+      if (out > 0) { this.vx -= n.nx * out * side; this.vz -= n.nz * out * side; }
+      this.vx *= 1 - 1.5 * dt;
+      this.vz *= 1 - 1.5 * dt;
+      if (!stunned) this.theta += angleDiff(Math.atan2(n.tz, n.tx), this.theta) * 2.2 * dt;
+      this.lat = side * track.wallLat;
+      this.hitWall = true;
+    } else this.hitWall = false;
+
+    // Høyde: ramper, og fritt fall etter et hopp.
+    const h = heightAt(track, this.s, this.lat);
+    if (!this.air) {
+      if (h < this.y - 0.2 && this.rampVy > 2) {
+        this.air = true;
+        this.vy = this.rampVy;
       } else {
-        j.setMotorSpeed(0);
-        j.setMaxMotorTorque(locked ? 60 : 2.5); // rolling resistance when coasting
+        const rise = (h - this.y) / dt;
+        this.rampVy = rise > 0 ? rise : this.rampVy * 0.9;
+        this.y = h;
       }
     }
-    this.jumpTimer -= dt;
-    if (grounded) this.airTime = 0; else this.airTime += dt;
-    // Air control like Hill Climb Racing: gas tilts nose up, reverse tilts nose down.
-    if (!grounded && !locked) this.chassis.applyTorque(t * TRUCK.airTorque, true);
-
-    if (!locked && input.jump && grounded && this.jumpTimer <= 0) {
-      this.jumpTimer = TRUCK.jumpCooldown;
-      for (const b of this.bodies) {
-        const v = b.getLinearVelocity();
-        b.setLinearVelocity(Vec2(v.x, Math.max(v.y, 0) + TRUCK.jumpVelocity));
+    if (this.air) {
+      this.vy -= GRAVITY * dt;
+      this.y += this.vy * dt;
+      if (this.y <= h) {
+        this.y = h;
+        this.vy = 0;
+        this.air = false;
+        this.rampVy = 0;
+        this.landed = true;
       }
     }
-  }
 
-  // Place the truck upright on the ground at (x, groundY), at rest.
-  place(x, groundY, angle = 0) {
-    const h = -TRUCK.wheelOffsetY + TRUCK.wheelRadius + 0.05;
-    const c = Vec2(x - Math.sin(angle) * h, groundY + Math.cos(angle) * h);
-    this.chassis.setTransform(c, angle);
-    [-1, 1].forEach((side, i) => {
-      const lx = side * TRUCK.wheelOffsetX, ly = TRUCK.wheelOffsetY;
-      const wx = c.x + lx * Math.cos(angle) - ly * Math.sin(angle);
-      const wy = c.y + lx * Math.sin(angle) + ly * Math.cos(angle);
-      this.wheels[i].setTransform(Vec2(wx, wy), 0);
-    });
-    for (const b of this.bodies) {
-      b.setLinearVelocity(Vec2(0, 0));
-      b.setAngularVelocity(0);
-      b.setAwake(true);
-    }
-    this.flipTimer = 0;
-    this.airTime = 0;
-  }
+    // Feil vei: kjører mot banens retning.
+    const along = this.vx * n.tx + this.vz * n.tz;
+    if (along < -3) this.wrongWay += dt; else this.wrongWay = 0;
 
-  speed() { return this.chassis.getLinearVelocity().length(); }
+    this.roll += (-steer * speedFrac * 0.12 - this.roll) * Math.min(1, 8 * dt);
+    this.wheelSpin += vf * dt / 1.1;
+  }
 }
