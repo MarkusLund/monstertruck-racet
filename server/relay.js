@@ -22,13 +22,18 @@ export function lanAddresses() {
 }
 
 async function publicUrl() {
+  const get = (url) => fetch(url, { signal: AbortSignal.timeout(500) }).then((r) => r.json());
   try {
-    const r = await fetch('http://127.0.0.1:4040/api/tunnels', { signal: AbortSignal.timeout(500) });
-    const j = await r.json();
-    return j.tunnels?.find((t) => t.public_url?.startsWith('https'))?.public_url || null;
-  } catch {
-    return null;
-  }
+    const j = await get('http://127.0.0.1:4040/api/tunnels');
+    const u = j.tunnels?.find((t) => t.public_url?.startsWith('https'))?.public_url;
+    if (u) return u;
+  } catch { /* ngrok kjører ikke */ }
+  try {
+    // cloudflared tunnel --metrics 127.0.0.1:20241 --url http://localhost:5173
+    const j = await get('http://127.0.0.1:20241/quicktunnel');
+    if (j.hostname) return `https://${j.hostname}`;
+  } catch { /* cloudflared kjører ikke */ }
+  return null;
 }
 
 function attach(httpServer, middlewares) {
