@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { posAt, SPACING } from './track.js';
 import { MAX_SPEED } from './truck.js';
+import { Countdown3D } from './countdown.js';
 
 export const PLAYER_COLORS = [
   { body: 0xe8412c, dark: 0xa82513 },
@@ -247,6 +248,8 @@ export class Renderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
+    this.countdown = new Countdown3D();
+    this.renderer.info.autoReset = false;
     this.scene.background = skyTexture();
     this.scene.fog = new THREE.Fog(0xcfe8f7, 140, 420);
     this.cameras = [0, 1].map(() => new THREE.PerspectiveCamera(60, 1, 0.5, 600));
@@ -625,6 +628,7 @@ export class Renderer {
 
     const { renderer } = this;
     const { w, h } = this.size;
+    renderer.info.reset(); // statistikken dekker bare de to spillerskjermene, ikke nedtellingen
     const half = Math.floor((w - 4) / 2);
     renderer.setScissorTest(false);
     renderer.clear();
@@ -640,6 +644,7 @@ export class Renderer {
       this.sun.position.set(tr.x - 70, 120, tr.z + 45);
       renderer.render(this.scene, this.cameras[i]);
     }
+    if (this.countdown.update(game)) this.countdown.render(renderer, w, h);
   }
 }
 

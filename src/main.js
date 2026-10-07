@@ -49,8 +49,8 @@ function updateHud() {
   const statusEl = $('status');
   let status = '';
   if (game.state === 'menu') status = 'Klar?';
-  else if (game.state === 'countdown') status = String(Math.ceil(game.countdown));
-  else if (game.state === 'racing') status = game.time < 1.2 ? 'KJØR!' : 'Løp!';
+  else if (game.state === 'countdown') status = 'Gjør deg klar!';
+  else if (game.state === 'racing') status = 'Løp!';
   else status = `Spiller ${game.winner + 1} vant!`;
   const devices = [0, 1].map((i) => {
     const pad = input.padInfo(i);
@@ -62,7 +62,7 @@ function updateHud() {
   if (key !== lastHud) {
     lastHud = key;
     statusEl.textContent = status;
-    statusEl.classList.toggle('big', game.state === 'countdown' || status === 'KJØR!');
+    statusEl.classList.toggle('big', false);
     for (const i of [0, 1]) {
       $(`score-${i}`).textContent = game.trucks[i].score;
       $(`devices-${i}`).textContent = devices[i];
