@@ -12,6 +12,7 @@ const REVERSE_MAX = 16;
 const BRAKE = 45;
 const JUMP_SPEED = 14; // topphøyde ≈ 3,5 (var 1,8)
 const SLOPE_ACCEL = 14; // tyngdekraft langs bakken: litt tregere opp, litt raskere ned
+const STATIC_GRIP = 1.5; // en truck som står stille uten gass blir stående i slakere bakker enn dette (m/s²)
 
 export const COIN_ACCEL = 0.03; // ekstra akselerasjon per mynt
 export const COIN_ACCEL_MAX = 0.6;
@@ -57,6 +58,7 @@ export class Truck {
     this.turbo = 0;
     this.shield = 0;
     this.stun = 0;
+    this.slick = 0; // olje: lite grep og rykkete styring en kort stund
     this.spin = 0; // kort spinn (én runde) etter å ha blitt truffet bakfra av en annen truck
     this.drift = 0; // drift-ladning i sekunder
     this.driftGap = 0;
@@ -116,6 +118,7 @@ export class Truck {
     this.turbo = Math.max(0, this.turbo - dt);
     this.shield = Math.max(0, this.shield - dt);
     this.stun = Math.max(0, this.stun - dt);
+    this.slick = Math.max(0, this.slick - dt);
     this.spin = Math.max(0, this.spin - dt);
     this.msgTimer = Math.max(0, this.msgTimer - dt);
     this.landed = false;
@@ -125,7 +128,7 @@ export class Truck {
     const throttle = locked || stunned || input.brake > 0 ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
     const brake = locked || stunned ? 0 : Math.max(0, Math.min(1, input.brake || 0));
     const jump = !locked && !stunned && !!input.jump;
-    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer));
+    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer + (this.slick > 0 ? Math.sin(this.slick * 14) * 0.5 : 0)));
     const fx = Math.cos(this.theta), fz = Math.sin(this.theta);
     const sx = -fz, sz = fx;
     let vf = this.vx * fx + this.vz * fz;
@@ -142,7 +145,8 @@ export class Truck {
       if (vf < max) vf = Math.min(max, vf + ACCEL * accMul * throttle * dt);
       else vf -= (vf - max) * (this.onRoad ? 1.2 : 3) * dt;
       vf -= vf * (throttle > 0 ? 0.12 : 0.7) * dt; // rullemotstand, mer uten gass
-      vf -= groundSlope(this.x, this.z, this.theta).forward * SLOPE_ACCEL * dt;
+      const slopeAcc = groundSlope(this.x, this.z, this.theta).forward * SLOPE_ACCEL;
+      if (throttle > 0 || Math.abs(vf) > 0.5 || Math.abs(slopeAcc) > STATIC_GRIP) vf -= slopeAcc * dt;
       if (brake > 0) {
         // Brems mens trucken ruller framover, deretter rygging.
         if (vf > 0.5) vf = Math.max(0, vf - BRAKE * brake * dt);
@@ -156,7 +160,7 @@ export class Truck {
       this.jumped = true;
     }
     this.updateDrift(dt, steer, throttle, stunned);
-    vs *= Math.exp(-GRIP * (air ? 0.1 : 1) * dt);
+    vs *= Math.exp(-GRIP * (air || this.slick > 0 ? 0.1 : 1) * dt);
 
     const speedFrac = Math.min(1, Math.abs(vf) / MAX_SPEED);
     let turn = steer * TURN_RATE * Math.min(1, Math.abs(vf) / 8) * (1 - 0.35 * Math.min(1, speedFrac));

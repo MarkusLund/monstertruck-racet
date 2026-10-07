@@ -1,7 +1,8 @@
 import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS } from './track.js';
-import { groundHeight, setTerrain } from './terrain.js';
+import { clearance, setTerrain } from './terrain.js';
 import { placePads, onPad, PAD_TURBO } from './pads.js';
 import { Truck, TURBO_TIME, SHIELD_TIME, STUN_TIME } from './truck.js';
+import { pickItem, dropOil, dropMine, updateOils, updateMines } from './powerups.js';
 
 export const DT = 1 / 60;
 export const LAPS = 3;
@@ -30,12 +31,12 @@ export function mulberry(seed) {
   };
 }
 
-// Høyde over bakken (y er absolutt: terreng + hoppehøyde).
-export const clearance = (o) => o.y - groundHeight(o.x, o.z);
+// Høyde over bakken (y er absolutt: terreng + hoppehøyde). Bor i terrain.js så pads/power-ups kan bruke den uten importsirkel.
+export { clearance };
 
 // Felt som sendes til tilskuere/fjernspillere hver gang verten sender et øyeblikksbilde.
 export const TRUCK_FIELDS =['x', 'y', 'z', 'theta', 'vx', 'vz', 'vy', 'roll', 'wheelSpin', 'air', 'rampVy', 'onRoad', 'lat', 's', 'dist',
-  'wrongWay', 'drift', 'turbo', 'shield', 'stun', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
+  'wrongWay', 'drift', 'turbo', 'shield', 'stun', 'slick', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
 
 // Spilltilstander: 'menu' -> 'countdown' -> 'racing' -> 'finished'
 export class Game {
@@ -74,6 +75,8 @@ export class Game {
     this.boxes = placeItemBoxes(track);
     this.projectiles = [];
     this.barricades = [];
+    this.oils = [];
+    this.mines = [];
     this.time = 0;
     this.countdown = COUNTDOWN;
     this.winner = null;
@@ -137,6 +140,8 @@ export class Game {
     this.collideTrucks();
     this.updateBarricades();
     this.updateProjectiles();
+    updateOils(this, DT);
+    updateMines(this, DT);
     this.trucks.forEach((t) => this.afterStep(t));
     for (const b of this.boxes) b.cooldown = Math.max(0, b.cooldown - DT);
   }
@@ -269,14 +274,20 @@ export class Game {
     const place = order.indexOf(t) + 1;
     const leader = order[0];
     const ahead = order[Math.max(0, place - 2)]; // trucken rett foran (rakettmålet)
-    const pool = place === 1 ? ['turbo', 'shield'] : ['turbo', 'rocket', 'barricade'];
-    const item = pool[Math.floor(this.rand() * pool.length)];
+    const rank = this.trucks.length > 1 ? (place - 1) / (this.trucks.length - 1) : 0;
+    const item = pickItem(rank, this.rand());
     if (item === 'turbo') {
       t.turbo = TURBO_TIME;
       t.say('TURBO!');
     } else if (item === 'shield') {
       t.shield = SHIELD_TIME;
       t.say('Skjold!');
+    } else if (item === 'oil') {
+      dropOil(this, t);
+      t.say('Oljeflekk lagt ut!');
+    } else if (item === 'mine') {
+      dropMine(this, t);
+      t.say('Mine lagt ut!');
     } else if (item === 'rocket') {
       this.projectiles.push({ x: t.x, z: t.z, owner: t.id, target: ahead.id, age: 0, dir: t.theta });
       t.say('Rakett!');
@@ -373,6 +384,8 @@ Game.prototype.snapshot = function snapshot() {
     bx: this.boxes.map((b) => Math.round(b.cooldown * 10) / 10),
     pr: this.projectiles.map((p) => [p.x, p.z, p.dir, p.target, p.missed ? 1 : 0]),
     ba: this.barricades.map((b) => [b.s, b.x, b.z, b.theta, b.life]),
+    oi: this.oils.map((o) => [Math.round(o.x * 10) / 10, Math.round(o.z * 10) / 10, Math.round(o.life * 10) / 10]),
+    mi: this.mines.map((m) => [Math.round(m.x * 10) / 10, Math.round(m.z * 10) / 10]),
   };
 };
 
@@ -395,4 +408,6 @@ Game.prototype.applySnapshot = function applySnapshot(sn) {
   this.boxes.forEach((b, i) => { b.cooldown = sn.bx[i] ?? 0; });
   this.projectiles = sn.pr.map(([x, z, dir, target, missed]) => ({ x, z, dir, target, missed: !!missed }));
   this.barricades = sn.ba.map(([s, x, z, theta, life]) => ({ s, x, z, theta, lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life }));
+  this.oils = sn.oi.map(([x, z, life]) => ({ x, z, life }));
+  this.mines = sn.mi.map(([x, z]) => ({ x, z }));
 };

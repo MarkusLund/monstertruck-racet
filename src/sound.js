@@ -70,7 +70,8 @@ export class Sound {
       setTimeout(() => this.beep(990, 0.18, 'triangle', 0.07), 90);
     } else if (type === 'hit') {
       if (e.cause === 'rocket' && !e.shielded) this.explosion();
-      else if (e.cause === 'rocket' || e.cause === 'shield') { this.explosion(0.4); this.beep(1500, 0.3, 'triangle', 0.06, -900); }
+      else if (e.cause === 'mine' && !e.shielded) this.explosion(0.7);
+      else if (e.cause === 'rocket' || e.cause === 'mine' || e.cause === 'shield') { this.explosion(0.4); this.beep(1500, 0.3, 'triangle', 0.06, -900); }
       else { this.noise(0.35, 0.2, 3000, 300); this.beep(160, 0.45, 'sawtooth', 0.09, -110); }
     } else if (type === 'bump') {
       const power = Math.max(0, Math.min(1, ((e.power ?? 8) - 5) / 20));

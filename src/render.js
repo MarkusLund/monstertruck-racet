@@ -201,6 +201,18 @@ function padGeometry(track, pad, n = 4) {
   return g;
 }
 
+// Legger en flat geometri (i XZ-planet) oppå terrenget rundt (x, z). Regnes bare om når posisjonen endres.
+function drape(mesh, x, z, lift) {
+  const { userData: u } = mesh;
+  if (u.x === x && u.z === z) return;
+  u.x = x; u.z = z;
+  const pos = mesh.geometry.attributes.position;
+  for (let k = 0; k < pos.count; k++) pos.setY(k, groundHeight(x + pos.getX(k), z + pos.getZ(k)) + lift);
+  pos.needsUpdate = true;
+  mesh.geometry.computeBoundingSphere();
+  mesh.position.set(x, 0, z);
+}
+
 const TERRAIN_SIZE = 1400;
 const TERRAIN_STEP = 4;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -597,6 +609,11 @@ export class Renderer {
     this.boxMeshes = [];
     this.rocketMeshes = [];
     this.barricadeMeshes = [];
+    this.oilMeshes = [];
+    this.mineMeshes = [];
+    this.oilMat = new THREE.MeshStandardMaterial({ color: 0x0b0b10, roughness: 0.05, metalness: 0.6, transparent: true, opacity: 0.88 });
+    this.mineBodyMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, metalness: 0.5, roughness: 0.4 });
+    this.mineLightMat = new THREE.MeshBasicMaterial({ color: 0xff2a1a });
     this.stripeMat = new THREE.MeshStandardMaterial({
       map: canvasTexture(128, (g, sz) => {
         for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#f4f4f4' : '#e8412c'; g.fillRect((i * sz) / 8, 0, sz / 8 + 1, sz); }
@@ -684,6 +701,40 @@ export class Renderer {
     });
   }
 
+  // Oljeflekker (blank skive som følger terrenget) og miner (flat skive med blinkende lys) på bakken.
+  updateHazards(game, time) {
+    const grow = (list, make, count) => {
+      while (list.length < count) { const m = make(); this.scene.add(m); list.push(m); }
+    };
+    grow(this.oilMeshes, () => {
+      // Ring med indre radius 0 og flere ringer, så skiva kan bøyes etter bakken.
+      return new THREE.Mesh(new THREE.RingGeometry(0, 4.2, 28, 4).rotateX(-Math.PI / 2), this.oilMat);
+    }, game.oils.length);
+    this.oilMeshes.forEach((m, k) => {
+      const o = game.oils[k];
+      m.visible = !!o;
+      if (o) drape(m, o.x, o.z, 0.11);
+    });
+    grow(this.mineMeshes, () => {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.7, 0.6, 16), this.mineBodyMat);
+      body.position.y = 0.3;
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), this.mineLightMat);
+      light.position.y = 0.8;
+      g.add(body, light);
+      g.userData.light = light;
+      return g;
+    }, game.mines.length);
+    this.mineMeshes.forEach((m, k) => {
+      const b = game.mines[k];
+      m.visible = !!b;
+      if (b) {
+        m.position.set(b.x, groundHeight(b.x, b.z), b.z);
+        m.userData.light.visible = Math.floor(time * 4 + k) % 2 === 0;
+      }
+    });
+  }
+
   resize(cssW, cssH) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(dpr);
@@ -756,6 +807,8 @@ export class Renderer {
       if (m.flames.visible) m.flames.scale.set(0.8 + Math.random() * 0.5, 1, 1);
       this.updateSparks(m.sparks, t);
       m.bubble.visible = t.shield > 0 && (t.shield > 2 || Math.floor(time * 8) % 2 === 0);
+      m.bubble.material.opacity = 0.34 + Math.sin(time * 6) * 0.1;
+      m.bubble.scale.setScalar(1 + Math.sin(time * 6) * 0.03);
       m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
       this.updateCamera(i, t, dt, snap);
       this.fx.applyCamera(this.cameras[i], i, time);
@@ -768,6 +821,7 @@ export class Renderer {
     });
 
     this.updateProps(game, time);
+    this.updateHazards(game, time);
 
     const { renderer } = this;
     const { w, h } = this.size;

@@ -301,12 +301,13 @@ function updateHud(views = currentViews()) {
     rw.classList.toggle('show', !!warn);
     let text = '', cls = '';
     if (game.state === 'racing') {
-      if (t.msgTimer > 0) { text = t.msg; cls = t.stun > 0 ? 'stun' : t.turbo > 0 ? 'turbo' : t.shield > 0 ? 'shield' : ''; }
+      if (t.msgTimer > 0) { text = t.msg; cls = t.stun > 0 ? 'stun' : t.slick > 0 ? 'slick' : t.turbo > 0 ? 'turbo' : t.shield > 0 ? 'shield' : ''; }
       else if (t.stun > 0) { text = 'Truffet!'; cls = 'stun'; }
+      else if (t.slick > 0) { text = 'Sladd!'; cls = 'slick'; }
       else if (driftTier(t.drift) > 0) { text = 'DRIFT'; cls = `drift${driftTier(t.drift)}`; }
       else if (t.turbo > 0) { text = 'TURBO!'; cls = 'turbo'; }
       else if (t.draft > 0.3) { text = 'Slipstream'; cls = 'draft'; }
-      else if (t.shield > 0) { text = 'Skjold'; cls = 'shield'; }
+      else if (t.shield > 0) { text = `Skjold ${Math.ceil(t.shield)}s`; cls = 'shield'; }
     }
     const fx = $(`fx-${i}`);
     setText(fx, text);
@@ -417,11 +418,13 @@ window.__game = {
         x: t.x, z: t.z, theta: t.theta, speed: t.speed, score: t.score,
         lat: t.lat, s: t.s, dist: t.dist, lap: game.lap(t), place: game.place(t),
         onRoad: t.onRoad, wrongWay: t.wrongWay,
-        y: t.y, ground: groundHeight(t.x, t.z), air: t.air, drift: t.drift, turbo: t.turbo, shield: t.shield, stun: t.stun, draft: t.draft, catchup: t.catchup, msg: t.msg,
+        y: t.y, ground: groundHeight(t.x, t.z), air: t.air, drift: t.drift, turbo: t.turbo, shield: t.shield, stun: t.stun, slick: t.slick, draft: t.draft, catchup: t.catchup, msg: t.msg,
       })),
       boxes: game.boxes.length,
       barricades: game.barricades.map((b) => ({ s: b.s, life: b.life })),
       projectiles: game.projectiles.length,
+      oils: game.oils.length,
+      mines: game.mines.length,
       jumps: game.track.jumps,
       padList: game.track.pads,
       pads: [input.padInfo(0), input.padInfo(1)],

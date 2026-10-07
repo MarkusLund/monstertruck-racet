@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { MAX_SPEED } from './truck.js';
+import { groundHeight, clearance } from './terrain.js';
 
 // Visuelle effekter ("game feel"): partikler, eksplosjoner, kamerarist og sakte-film.
 // Alt her er ren visning og leser bare spilltilstanden, så den autoritative fysikken (verten) berøres ikke.
@@ -136,7 +137,7 @@ export class Fx {
     if (game.state !== 'racing' && game.state !== 'countdown') return;
     game.trucks.forEach((t, i) => {
       const frac = clamp((t.speed - 8) / (MAX_SPEED - 8), 0, 1);
-      if (t.air || t.y > 0.4 || frac <= 0) { this.dustAcc[i] = 0; return; }
+      if (t.air || clearance(t) > 0.4 || frac <= 0) { this.dustAcc[i] = 0; return; }
       const offroad = !t.onRoad;
       this.dustAcc[i] += dt * frac * (offroad ? 36 : 16);
       const fx = Math.cos(t.theta), fz = Math.sin(t.theta);
@@ -145,38 +146,44 @@ export class Fx {
         const side = Math.random() < 0.5 ? -1 : 1;
         const bx = t.x - fx * 2.3 - fz * side * 1.9, bz = t.z - fz * 2.3 + fx * side * 1.9;
         const back = t.speed * 0.12;
+        const by = groundHeight(bx, bz);
         if (offroad) {
           const dirt = rnd(0.2, 0.3);
-          this.spawn(bx, 0.3, bz, -fx * back + rnd(-2, 2), rnd(1, 3), -fz * back + rnd(-2, 2), rnd(0.6, 1.1), rnd(1.1, 1.8), 2.4, [0.45, 0.36, 0.24], 0.5, 0.5, 2.2);
-          if (Math.random() < 0.5) this.spawn(bx, 0.4, bz, -fx * back * 0.6 + rnd(-3, 3), rnd(5, 9), -fz * back * 0.6 + rnd(-3, 3), rnd(0.5, 0.9), 0.5, 0, [dirt + 0.18, dirt + 0.08, dirt], 1, -22, 0);
+          this.spawn(bx, by + 0.3, bz, -fx * back + rnd(-2, 2), rnd(1, 3), -fz * back + rnd(-2, 2), rnd(0.6, 1.1), rnd(1.1, 1.8), 2.4, [0.45, 0.36, 0.24], 0.5, 0.5, 2.2);
+          if (Math.random() < 0.5) this.spawn(bx, by + 0.4, bz, -fx * back * 0.6 + rnd(-3, 3), rnd(5, 9), -fz * back * 0.6 + rnd(-3, 3), rnd(0.5, 0.9), 0.5, 0, [dirt + 0.18, dirt + 0.08, dirt], 1, -22, 0);
         } else {
-          this.spawn(bx, 0.2, bz, -fx * back + rnd(-1, 1), rnd(0.5, 1.6), -fz * back + rnd(-1, 1), rnd(0.4, 0.7), rnd(0.8, 1.2), 1.8, [0.8, 0.8, 0.82], 0.28, 0.3, 2.5);
+          this.spawn(bx, by + 0.2, bz, -fx * back + rnd(-1, 1), rnd(0.5, 1.6), -fz * back + rnd(-1, 1), rnd(0.4, 0.7), rnd(0.8, 1.2), 1.8, [0.8, 0.8, 0.82], 0.28, 0.3, 2.5);
         }
       }
     });
   }
 
   // Reagerer på et spill-event. `game` gir truckposisjoner. Kjøres likt hos vert og fjernspillere.
+  // Høyder regnes fra truckens faktiske y (terreng + hopp).
   onEvent(e, game) {
     const t = game.trucks[e.truck];
     if (!t) return;
+    const y = t.y;
     if (e.type === 'hit') {
       this.stats.hits++;
       if (e.cause === 'rocket' && !e.shielded) {
-        this.explosion(t.x, 1.4, t.z, 1);
+        this.explosion(t.x, y + 1.4, t.z, 1);
         this.addTrauma(e.truck, 1);
         this.kick[e.truck] = 1;
         this.slow = SLOW_TIME;
-      } else if (e.cause === 'rocket') {
-        this.explosion(t.x, 1.6, t.z, 0.5);
-        this.sparks(t.x, 2, t.z, 22, 14, SHIELD_SPARK);
+      } else if (e.cause === 'mine' && !e.shielded) {
+        this.explosion(t.x, y + 0.8, t.z, 0.7);
+        this.addTrauma(e.truck, 0.8);
+      } else if (e.cause === 'rocket' || e.cause === 'mine') {
+        this.explosion(t.x, y + 1.6, t.z, 0.5);
+        this.sparks(t.x, y + 2, t.z, 22, 14, SHIELD_SPARK);
         this.addTrauma(e.truck, 0.5);
       } else if (e.cause === 'shield') {
-        this.sparks(t.x, 1.8, t.z, 26, 14, SHIELD_SPARK);
+        this.sparks(t.x, y + 1.8, t.z, 26, 14, SHIELD_SPARK);
         this.addTrauma(e.truck, 0.45);
       } else {
-        this.sparks(t.x, 1, t.z, 20, 12);
-        this.dustPuff(t.x, 0.4, t.z, 10);
+        this.sparks(t.x, y + 1, t.z, 20, 12);
+        this.dustPuff(t.x, y + 0.4, t.z, 10);
         this.addTrauma(e.truck, 0.6);
       }
     } else if (e.type === 'bump') {
@@ -185,11 +192,12 @@ export class Fx {
       const o = game.trucks[e.other];
       const mx = o ? (t.x + o.x) / 2 : t.x + Math.cos(t.theta) * 2.2;
       const mz = o ? (t.z + o.z) / 2 : t.z + Math.sin(t.theta) * 2.2;
-      this.sparks(mx, 0.8, mz, Math.round(8 + power * 28), 8 + power * 12);
+      const my = o ? (y + o.y) / 2 : y;
+      this.sparks(mx, my + 0.8, mz, Math.round(8 + power * 28), 8 + power * 12);
       this.addTrauma(e.truck, 0.15 + power * 0.5);
       if (o) this.addTrauma(e.other, 0.15 + power * 0.5);
     } else if (e.type === 'land') {
-      this.dustPuff(t.x, 0.3, t.z, 8);
+      this.dustPuff(t.x, y + 0.3, t.z, 8);
       this.addTrauma(e.truck, 0.12);
     }
   }
@@ -210,7 +218,8 @@ export class Fx {
       p.vel[k] *= drag; p.vel[k + 2] *= drag;
       p.vel[k + 1] = p.vel[k + 1] * drag + p.grav[i] * sdt;
       p.pos[k] += p.vel[k] * sdt; p.pos[k + 1] += p.vel[k + 1] * sdt; p.pos[k + 2] += p.vel[k + 2] * sdt;
-      if (p.pos[k + 1] < 0.05) { p.pos[k + 1] = 0.05; p.vel[k + 1] = 0; }
+      const floor = groundHeight(p.pos[k], p.pos[k + 2]) + 0.05; // partikler legger seg på terrenget
+      if (p.pos[k + 1] < floor) { p.pos[k + 1] = floor; p.vel[k + 1] = 0; }
       const f = p.life[i] / p.maxLife[i];
       p.outSize[i] = p.size[i] + p.grow[i] * (1 - f);
       p.outAlpha[i] = p.a0[i] * Math.min(1, f * 2.5);

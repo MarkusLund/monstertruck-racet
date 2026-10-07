@@ -88,6 +88,9 @@ export function groundHeight(x, z) {
   return h * sample(active.grid.factor, active.grid, x, z, 1);
 }
 
+// Høyde over bakken for noe med absolutt y (terreng + hoppehøyde).
+export const clearance = (o) => o.y - groundHeight(o.x, o.z);
+
 // Avstand til veiens midtlinje (omtrent). Brukes av rendereren til å senke bakken litt under veien.
 export function roadDistance(x, z) {
   return active ? sample(active.grid.dist, active.grid, x, z, 99) : 99;

@@ -1,5 +1,5 @@
 import { posAt } from './track.js';
-import { groundHeight } from './terrain.js';
+import { groundHeight, clearance } from './terrain.js';
 
 // Boost-pads på bakken. Plasseringen avhenger bare av banen (som lages fra frøet),
 // så verten og alle klienter får de samme padsene uten å sende noe over nettet.
@@ -25,5 +25,5 @@ export function placePads(track) {
 export function onPad(pad, t, length) {
   let ds = t.s - pad.s;
   ds -= Math.round(ds / length) * length;
-  return Math.abs(ds) < PAD_LENGTH / 2 + 1 && Math.abs(t.lat - pad.lat) < PAD_HALF_WIDTH + 0.6 && t.y - groundHeight(t.x, t.z) < 1.5;
+  return Math.abs(ds) < PAD_LENGTH / 2 + 1 && Math.abs(t.lat - pad.lat) < PAD_HALF_WIDTH + 0.6 && clearance(t) < 1.5;
 }

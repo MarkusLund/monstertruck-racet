@@ -44,7 +44,8 @@ test('pad påvirker ikke trucker som ikke er på den', async ({ page }) => {
 test('rampe gir lufthopp, og mer fart gir lengre hopp', async ({ page }) => {
   await open(page);
   await startRace(page, { quiet: false });
-  const fly = (speed) => page.evaluate((speed) => {
+  const fly = (speed) => page.evaluate(async (speed) => {
+    const { clearance } = await import('/src/terrain.js');
     const g = window.__game, t = g.game.trucks[0];
     g.game.boxes.forEach((b) => { b.cooldown = 1e9; });
     const j = g.game.track.jumps[0];
@@ -53,7 +54,7 @@ test('rampe gir lufthopp, og mer fart gir lengre hopp', async ({ page }) => {
     let maxY = 0, airTime = 0, took = false;
     for (let i = 0; i < 240; i++) {
       t.step({ throttle: 1, steer: 0, brake: 0, jump: false }, 1 / 60, g.game.track, false);
-      maxY = Math.max(maxY, t.y);
+      maxY = Math.max(maxY, clearance(t)); // høyde over bakken, som i terrengtesten
       if (t.air) { airTime += 1 / 60; took = true; } else if (took) break;
     }
     return { maxY, airTime, took };
