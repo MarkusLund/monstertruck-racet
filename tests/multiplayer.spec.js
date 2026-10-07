@@ -37,6 +37,10 @@ test.describe('Flerspiller', () => {
     await wait(host, () => window.__game.host.peers.size === 3);
     for (const c of clients) await wait(c, () => window.__game.client.status === 'lobby');
 
+    // Spilltrafikken skal gå direkte mellom nettleserne (WebRTC), ikke via relayen.
+    await wait(host, () => window.__game.state().net.direct === 3);
+    for (const c of clients) await wait(c, () => window.__game.state().net.direct === 1);
+
     // Start løpet fra verten. Alle klientene får hver sin plass.
     await host.keyboard.press('Enter');
     await host.evaluate(() => window.__game.advance(0.05));

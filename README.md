@@ -48,6 +48,8 @@ Du kan også bygge en statisk versjon med `npm run build` (legges i `dist/`) og 
 
 Hvis wifi-et har **klientisolering** (enheter kan ikke snakke sammen, vanlig på gjestenett og noen kontornett), når ikke de andre adressen over. Da kan verten åpne en tunnel med f.eks. `ngrok http 5173`. Adressen den gir (`https://….ngrok-free.app`) vises også på startskjermen, og alle kan åpne den. Trafikken går da via internett (ca. 20–60 ms ekstra).
 
+Selve spilltrafikken (input og øyeblikksbilder) forsøker å gå **direkte mellom nettleserne** over en WebRTC-datakanal (UDP-lignende, STUN fra Cloudflare/Google). Tunnelen brukes da bare til oppkoblingen, så lagget blir omtrent som på lokalt nett. Hvis den direkte koblingen ikke lar seg opprette (streng brannmur/NAT), brukes tunnelen som før. Alternativ til ngrok: `cloudflared tunnel --url http://localhost:5173`.
+
 Slik fungerer det: fjernspillere sender bare gass og sving til verten via en liten WebSocket-relay som ligger i Vite-serveren (`server/relay.js`). Verten simulerer alt og sender 30 øyeblikksbilder i sekundet tilbake. Banen lages av et frø, så alle får samme bane. Bruk `?room=navn` i adressen hvis flere grupper deler samme server.
 
 ## Tester

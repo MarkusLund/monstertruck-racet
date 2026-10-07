@@ -391,7 +391,7 @@ window.__game = {
       jumps: game.track.jumps,
       pads: [input.padInfo(0), input.padInfo(1)],
       triangles: renderer.renderer.info.render.triangles,
-      net: { role, peers: host.peers.size, slots: host.slots.length, clientStatus: client.status, clientSlot: client.slot, seed: game.seed },
+      net: { role, peers: host.peers.size, slots: host.slots.length, direct: net ? net.direct : 0, clientStatus: client.status, clientSlot: client.slot, seed: game.seed },
     };
   },
   // Flytter en truck til avstand s langs banen (og sideforskyvning lat). `lap` = antall fullførte runder.
