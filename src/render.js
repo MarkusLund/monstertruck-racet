@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { posAt, SPACING } from './track.js';
 import { MAX_SPEED } from './truck.js';
 import { Countdown3D } from './countdown.js';
+import { Fx } from './fx.js';
 
 export const PLAYER_COLORS = [
   { body: 0xe8412c, dark: 0xa82513 },
@@ -258,6 +259,7 @@ export class Renderer {
     this.renderer.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
     this.countdown = new Countdown3D();
+    this.fx = new Fx(this.scene);
     this.renderer.info.autoReset = false;
     this.scene.background = skyTexture();
     this.scene.fog = new THREE.Fog(0xcfe8f7, 140, 420);
@@ -628,7 +630,9 @@ export class Renderer {
       m.bubble.visible = t.shield > 0 && (t.shield > 2 || Math.floor(time * 8) % 2 === 0);
       m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
       this.updateCamera(i, t, dt, snap);
+      this.fx.applyCamera(this.cameras[i], i, time);
     });
+    this.fx.update(game, dt);
     game.coins.forEach((c, k) => {
       const holder = this.coinMeshes[k];
       holder.visible = !c.taken;

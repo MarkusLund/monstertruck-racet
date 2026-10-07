@@ -168,7 +168,7 @@ export class Game {
           const j = (-(1 + 0.5) * rel) / 2;
           a.vx -= nx * j; a.vz -= nz * j;
           b.vx += nx * j; b.vz += nz * j;
-          if (-rel > 5) this.emit({ type: 'bump', truck: a.id });
+          if (-rel > 5) this.emit({ type: 'bump', truck: a.id, other: b.id, power: -rel });
           // Rammer man rumpa på en truck foran seg, spinner den foran rundt én gang.
           if (-rel > 6) { this.rearHit(a, b, nx, nz); this.rearHit(b, a, -nx, -nz); }
         }
@@ -183,7 +183,7 @@ export class Game {
     const ramming = Math.cos(o.theta) * nx + Math.sin(o.theta) * nz < -0.6;
     if (!behind || !ramming) return;
     t.spin = 0.7; // 9 rad/s i 0,7 s ≈ én runde
-    this.emit({ type: 'hit', truck: t.id });
+    this.emit({ type: 'hit', truck: t.id, cause: 'spin' });
   }
 
   // Veisperrer: tette kloss over hele asfalten som forsvinner etter en stund.
@@ -198,11 +198,12 @@ export class Game {
           t.shield = 0;
           bar.life = 0;
           t.say('Skjoldet knuste veisperren!');
-          this.emit({ type: 'hit', truck: t.id });
+          this.emit({ type: 'hit', truck: t.id, cause: 'shield' });
           continue;
         }
         // Skyv trucken tilbake på den siden den kom fra, og ta av mesteparten av farten.
         const side = ds >= 0 ? 1 : -1;
+        const impact = t.speed;
         const n = t.nearest;
         const move = side * 4.2 - ds;
         t.x += n.tx * move;
@@ -213,7 +214,7 @@ export class Game {
           t.vz -= n.tz * along * 1.3;
         }
         t.vx *= 0.6; t.vz *= 0.6;
-        if (!bar.hit) { bar.hit = true; this.emit({ type: 'bump', truck: t.id }); }
+        if (!bar.hit) { bar.hit = true; this.emit({ type: 'bump', truck: t.id, power: impact }); }
         t.say('Veisperre! Ta omveien i gresset');
       }
     }
@@ -244,14 +245,15 @@ export class Game {
   }
 
   hitByRocket(t) {
-    if (t.shield > 0) {
+    const shielded = t.shield > 0;
+    if (shielded) {
       t.shield = 0;
       t.say('Skjoldet reddet deg!');
     } else {
       t.stun = STUN_TIME;
       t.say('Truffet av rakett!');
     }
-    this.emit({ type: 'hit', truck: t.id });
+    this.emit({ type: 'hit', truck: t.id, cause: 'rocket', shielded });
   }
 
   // Delte ut et tilfeldig power-up. Den som ligger bak får bedre (og mer skadelige) ting enn lederen.

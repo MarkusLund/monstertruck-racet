@@ -4,6 +4,7 @@ import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
 import { MAX_SPEED } from './truck.js';
 import { Net, lerpSnapshot } from './net.js';
+import { loadRecords, submitTime } from './records.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -109,7 +110,8 @@ function clientMessage(m) {
     client.curTime = performance.now();
     if (client.slot !== null && client.status !== 'full') client.status = 'playing';
     for (const e of m.s.ev || []) {
-      if (e.truck === undefined || e.truck === client.slot || e.type === 'finish') sound.play(e.type);
+      if (e.truck === undefined || e.truck === client.slot || e.other === client.slot || e.type === 'finish') sound.play(e.type, e);
+      renderer.fx.onEvent(e, game);
     }
   }
 }
@@ -149,7 +151,10 @@ function simStep() {
     return s.kind === 'local' ? input.player(s.k) : (host.peers.get(s.id)?.input || IDLE);
   });
   game.step(lastInputs);
-  for (const e of game.events) sound.play(e.type);
+  for (const e of game.events) {
+    sound.play(e.type, e);
+    renderer.fx.onEvent(e, game);
+  }
   if (host.peers.size) host.evBuf.push(...game.events);
   game.events.length = 0;
 
@@ -212,6 +217,11 @@ function currentViews() {
 
 const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
 let lastKey = '';
+function updateBest() {
+  const { best } = loadRecords();
+  setText($('best'), best === null ? '' : `Rekord: ${fmtTime(best)}`);
+}
+updateBest();
 function updateHud(views = currentViews()) {
   const playing = role === 'host' || (client.status === 'playing' && !!client.cur);
   const key = `${views.join()}|${game.trucks.length}|${role}`;
@@ -252,6 +262,14 @@ function updateHud(views = currentViews()) {
       $('winner-text').textContent = `Spiller ${game.winner + 1} vant!`;
       $('winner-text').style.color = COLORS[game.winner];
       $('winner-time').textContent = `Tid: ${fmtTime(game.finishTime)}`;
+      const rec = submitTime(game.seed, game.finishTime);
+      let recText = '';
+      if (rec.newRecord) recText = 'NY REKORD!';
+      else if (rec.newTrackRecord) recText = 'NY BANEREKORD!';
+      setText($('record-text'), recText);
+      $('record-text').classList.toggle('hidden', !recText);
+      $('best-time').textContent = `Rekord: ${fmtTime(Math.min(rec.best ?? Infinity, game.finishTime))}`;
+      updateBest();
       $('result-scores').innerHTML = game.order().map((t, i) =>
         `<div class="rs c${t.id}"><div class="pl">${i + 1}. Spiller ${t.id + 1}</div><div class="big" id="res-score-${t.id}">${t.score}</div><div>mynter</div></div>`).join('');
       $('again').textContent = role === 'host' ? '' : 'Venter på at verten starter nytt løp …';
