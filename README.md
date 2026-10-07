@@ -52,6 +52,15 @@ Selve spilltrafikken (input og øyeblikksbilder) forsøker å gå **direkte mell
 
 Slik fungerer det: fjernspillere sender bare gass og sving til verten via en liten WebSocket-relay som ligger i Vite-serveren (`server/relay.js`). Verten simulerer alt og sender 30 øyeblikksbilder i sekundet tilbake. Banen lages av et frø, så alle får samme bane. Bruk `?room=navn` i adressen hvis flere grupper deler samme server.
 
+## Hosting på Cloudflare (ingen vert nødvendig)
+
+`server/worker.js` er en Cloudflare Worker med ett Durable Object per rom (`?room=navn`) som kjører hele simuleringen. Alle spillerne er vanlige klienter, og den som trykker `Enter` starter løpet.
+
+```bash
+npm run deploy     # bygger og deployer med wrangler
+npm run cf:dev     # kjører det samme lokalt på http://localhost:8787 (bruk ?role=client, ellers tror localhost at den er vert)
+```
+
 ## Tester
 
 ```bash

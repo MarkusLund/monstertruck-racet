@@ -33,6 +33,9 @@ function resize() {
   renderer.resize(Math.max(2, Math.round(r.width)), Math.max(2, Math.round(r.height)));
 }
 window.addEventListener('resize', resize);
+// Safari kan ha ferdig layout først etter at scriptet har kjørt, og dpr endres når vinduet flyttes mellom skjermer.
+if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
+window.matchMedia?.(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener?.('change', resize);
 resize();
 
 function fmtTime(t) {
@@ -91,22 +94,30 @@ function hostMessage(m) {
 }
 
 // ---------- Klient: viser verten sitt spill fra egen truck ----------
-const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '' };
+const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '', buf: [], rq: 0, gaps: [], dry: 0 };
 
 function clientMessage(m) {
   if (m.t === 'hello') { client.id = m.id; client.status = m.host ? 'lobby' : 'nohost'; }
   else if (m.t === 'host') client.status = 'lobby';
-  else if (m.t === 'hostgone') { client.status = 'nohost'; client.cur = client.prev = null; }
+  else if (m.t === 'hostgone') { client.status = 'nohost'; client.cur = client.prev = null; client.buf = []; }
   else if (m.t === 'lobby') {
     client.slot = m.you >= 0 ? m.you : null;
     client.status = m.state === 'menu' ? 'lobby' : 'spectate';
-    if (m.state === 'menu') client.cur = client.prev = null;
+    if (m.state === 'menu') { client.cur = client.prev = null; client.buf = []; }
   } else if (m.t === 'assign') { client.slot = m.slot; client.status = 'playing'; }
   else if (m.t === 'full') client.status = 'full';
   else if (m.t === 'snap') {
     client.prev = client.cur || m.s;
     client.cur = m.s;
-    client.curTime = performance.now();
+    const arrived = performance.now();
+    if (client.curTime) { client.gaps.push(arrived - client.curTime); if (client.gaps.length > 300) client.gaps.shift(); }
+    client.curTime = arrived;
+    // Jitterbuffer: tegn et par øyeblikksbilder bak, så uregelmessig nettverk ikke gir hakking.
+    const last = client.buf[client.buf.length - 1];
+    if (last && (last.s.seed !== m.s.seed || m.q <= last.q)) client.buf = [];
+    client.buf.push({ q: m.q, s: m.s });
+    if (client.buf.length > 12) client.buf.shift();
+    if (client.buf.length === 1) client.rq = m.q;
     if (client.slot !== null && client.status !== 'full') client.status = 'playing';
     for (const e of m.s.ev || []) {
       if (e.truck === undefined || e.truck === client.slot || e.type === 'finish') sound.play(e.type);
@@ -168,9 +179,12 @@ function clientInput() {
   return { th: Math.max(a.throttle, b.throttle), st: clamp(a.steer + b.steer, -1, 1), br: Math.max(a.brake, b.brake), jp: a.jump || b.jump };
 }
 
-function clientStep(now) {
+const SNAP_DELAY = 2;
+function clientStep(now, dt) {
   input.poll();
   if (input.pressed.size || input.padEdges.size) sound.unlock();
+  // Spillserveren (server/worker.js) har ingen vert som kan trykke Enter, så en klient kan starte løpet selv.
+  if (net && input.confirmPressed() && (client.status === 'lobby' || (client.status === 'playing' && game.state === 'finished'))) net.send({ t: 'start' });
   const inp = clientInput();
   lastInputs = [{ throttle: inp.th, steer: inp.st }];
   const key = `${inp.th.toFixed(2)}|${inp.st.toFixed(2)}|${inp.br.toFixed(2)}|${inp.jp ? 1 : 0}`;
@@ -179,9 +193,17 @@ function clientStep(now) {
     client.sentAt = now;
     net.send({ t: 'in', th: inp.th, st: inp.st, br: inp.br, jp: inp.jp });
   }
-  if (client.cur) {
-    const k = (now - client.curTime) / (1000 / 30);
-    game.applySnapshot(lerpSnapshot(client.prev, client.cur, Math.min(1, k)));
+  const buf = client.buf;
+  if (buf.length) {
+    const newest = buf[buf.length - 1].q, oldest = buf[0].q;
+    const err = newest - SNAP_DELAY - client.rq;
+    if (Math.abs(err) > 6) client.rq = newest - SNAP_DELAY;
+    else client.rq += dt * 30 * (1 + clamp(err * 0.15, -0.3, 0.3));
+    if (client.rq >= newest) { client.rq = newest; client.dry++; }
+    client.rq = Math.max(client.rq, oldest);
+    const i = Math.min(buf.length - 1, Math.max(0, Math.floor(client.rq - oldest)));
+    const a = buf[i], b = buf[Math.min(i + 1, buf.length - 1)];
+    game.applySnapshot(lerpSnapshot(a.s, b.s, b === a ? 1 : clamp(client.rq - a.q, 0, 1)));
   }
 }
 
@@ -254,8 +276,7 @@ function updateHud(views = currentViews()) {
       $('winner-time').textContent = `Tid: ${fmtTime(game.finishTime)}`;
       $('result-scores').innerHTML = game.order().map((t, i) =>
         `<div class="rs c${t.id}"><div class="pl">${i + 1}. Spiller ${t.id + 1}</div><div class="big" id="res-score-${t.id}">${t.score}</div><div>mynter</div></div>`).join('');
-      $('again').textContent = role === 'host' ? '' : 'Venter på at verten starter nytt løp …';
-      if (role === 'host') $('again').innerHTML = 'Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen';
+      $('again').innerHTML = 'Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen';
     }
   }
 
@@ -323,7 +344,7 @@ function renderClientPanel() {
   const msgs = {
     connecting: 'Kobler til …',
     nohost: 'Venter på at verten åpner spillet …',
-    lobby: 'Koblet til! Venter på at verten starter løpet …',
+    lobby: 'Koblet til! Trykk Enter (eller ✕) for å starte løpet.',
     spectate: 'Et løp pågår. Du blir med i neste løp.',
     full: 'Løpet er fullt (maks 4 spillere). Du blir med i neste løp hvis det er plass.',
     playing: 'Venter på data fra verten …',
@@ -349,13 +370,24 @@ function updateEngine() {
   sound.engine(Math.min(1, speed / MAX_SPEED), throttle, racing && game.state !== 'finished');
 }
 
+const dbg = new URLSearchParams(location.search).has('debug') ? document.body.appendChild(Object.assign(document.createElement('pre'), { style: 'position:fixed;left:6px;bottom:6px;z-index:99;margin:0;padding:4px 6px;background:#000a;color:#8f8;font:11px monospace;pointer-events:none' })) : null;
+let fpsN = 0, fpsT = performance.now(), fps = 0;
+function updateDebug(now) {
+  fpsN++;
+  if (now - fpsT < 500) return;
+  fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now;
+  const g = client.gaps.slice().sort((x, y) => x - y);
+  const pc = (p) => (g.length ? g[Math.min(g.length - 1, Math.floor(g.length * p))] : 0).toFixed(0);
+  dbg.textContent = `fps ${fps}  dpr ${window.devicePixelRatio}  canvas ${canvas.width}x${canvas.height}\nsnap-gap p50 ${pc(0.5)} p90 ${pc(0.9)} p99 ${pc(0.99)} ms  buffer ${client.buf.length}  tomt ${client.dry}`;
+}
+
 let acc = 0, last = performance.now(), clock = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   clock += dt;
   if (role === 'client') {
-    clientStep(now);
+    clientStep(now, dt);
   } else if (!manual) {
     acc += dt;
     let n = 0;
@@ -366,6 +398,7 @@ function frame(now) {
   renderer.draw(game, dt, clock, views);
   updateHud(views);
   updateEngine();
+  if (dbg) updateDebug(now);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
