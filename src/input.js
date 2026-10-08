@@ -3,8 +3,14 @@
 // so keyboard and controllers can be mixed freely.
 
 export const KEYS = {
-  0: { accel: 'KeyW', back: 'KeyS', jump: 'Space', left: 'KeyA', right: 'KeyD' },
-  1: { accel: 'ArrowUp', back: 'ArrowDown', jump: 'ShiftRight', left: 'ArrowLeft', right: 'ArrowRight' },
+  0: { accel: ['KeyS'], back: ['Digit2'], jump: ['KeyA'], left: ['Digit1'], right: ['Digit3'] },
+  1: {
+    accel: ['AltRight', 'ArrowUp'],
+    back: ['ArrowDown'],
+    jump: ['MetaRight', 'ShiftRight'],
+    left: ['ArrowLeft'],
+    right: ['ArrowRight'],
+  },
 };
 
 // Standard Gamepad mapping (Chrome/Safari/Firefox on macOS map DualSense to this).
@@ -25,6 +31,7 @@ export class Input {
   constructor(target = window) {
     this.down = new Set();
     this.pressedQueue = new Set(); // key codes pressed since last poll
+    this.metaKeys = new Set(); // taster trykket mens Cmd var nede (mister keyup på Mac)
     this.padSlots = [null, null]; // gamepad index assigned to player 0/1
     this.prevPadButtons = new Map(); // gamepad index -> boolean[]
     this.padEdges = new Map(); // gamepad index -> Set(button) newly pressed this poll
@@ -34,9 +41,20 @@ export class Input {
       if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
       if (!e.repeat) this.pressedQueue.add(e.code);
       this.down.add(e.code);
+      // macOS sender ikke keyup for taster som trykkes mens Cmd holdes inne.
+      if (e.metaKey && !e.code.startsWith('Meta')) this.metaKeys.add(e.code);
     });
-    target.addEventListener('keyup', (e) => this.down.delete(e.code));
-    target.addEventListener('blur', () => this.down.clear());
+    target.addEventListener('keyup', (e) => {
+      this.down.delete(e.code);
+      if (e.code.startsWith('Meta')) {
+        for (const c of this.metaKeys) this.down.delete(c);
+        this.metaKeys.clear();
+      }
+    });
+    target.addEventListener('blur', () => {
+      this.down.clear();
+      this.metaKeys.clear();
+    });
   }
 
   // Call once per simulation step.
@@ -86,10 +104,11 @@ export class Input {
   player(i) {
     const k = KEYS[i];
     const pad = this.pads[i];
-    let throttle = this.down.has(k.accel) ? 1 : 0;
-    let steer = (this.down.has(k.right) ? 1 : 0) - (this.down.has(k.left) ? 1 : 0);
-    let brake = this.down.has(k.back) ? 1 : 0;
-    let jump = this.down.has(k.jump);
+    const held = (codes) => codes.some((c) => this.down.has(c));
+    let throttle = held(k.accel) ? 1 : 0;
+    let steer = (held(k.right) ? 1 : 0) - (held(k.left) ? 1 : 0);
+    let brake = held(k.back) ? 1 : 0;
+    let jump = held(k.jump);
     if (pad) {
       const l2 = this.padButton(pad, BTN_L2);
       brake = Math.max(brake, l2 > 0.04 ? l2 : 0);

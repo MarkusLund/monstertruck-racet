@@ -57,8 +57,8 @@ test.describe('Flerspiller', () => {
     expect([...slots].sort()).toEqual([1, 2, 3]);
 
     // Verten trår gasen; fjernspillerne holder inne gass. Alle skal bevege seg.
-    await host.keyboard.down('w');
-    await clients[0].keyboard.down('w');
+    await host.keyboard.down('s');
+    await clients[0].keyboard.down('s');
     await clients[1].keyboard.down('ArrowUp');
     // Sanntidskjøring (ikke manuell): sett verten i gang med stegene sine.
     await host.evaluate(() => {

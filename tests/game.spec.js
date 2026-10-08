@@ -24,8 +24,8 @@ test.describe('Startskjerm', () => {
     }
     const p1 = page.locator('#menu .ctl.p1');
     const p2 = page.locator('#menu .ctl.p2');
-    for (const k of ['W', 'A', 'D']) await expect(p1.locator('kbd', { hasText: new RegExp(`^${k}$`) })).toHaveCount(1);
-    for (const k of ['↑', '←', '→']) await expect(p2.locator('kbd', { hasText: k })).toHaveCount(1);
+    for (const k of ['S', 'A', '1', '3']) await expect(p1.locator('kbd', { hasText: new RegExp(`^${k}$`) })).toHaveCount(1);
+    for (const k of ['⌥', '⌘', '←', '→']) await expect(p2.locator('kbd', { hasText: k })).toHaveCount(1);
     expect((await state(page)).state).toBe('menu');
   });
 
@@ -67,9 +67,9 @@ test.describe('Startskjerm', () => {
     // Headless Chromium rendrer med programvare og er tregt, så grensene er romslige.
     await expect.poll(async () => (await state(page)).state, { timeout: 40000 }).toBe('racing');
     const d0 = (await state(page)).trucks[0].dist;
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await expect.poll(async () => (await state(page)).trucks[0].dist, { timeout: 20000 }).toBeGreaterThan(d0 + 5);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
   });
 });
 
@@ -77,21 +77,21 @@ test.describe('Styring (kun gass og sving)', () => {
   test('truckene står stille under nedtellingen', async ({ page }) => {
     await open(page);
     await page.keyboard.press('Enter');
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 2);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     const s = await state(page);
     expect(s.state).toBe('countdown');
     expect(s.trucks[0].speed).toBeLessThan(0.2);
   });
 
-  test('spiller 1 gasser med W uten å påvirke spiller 2', async ({ page }) => {
+  test('spiller 1 gasser med S uten å påvirke spiller 2', async ({ page }) => {
     await open(page);
     await startRace(page);
     const s0 = await state(page);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 2);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     const s1 = await state(page);
     expect(s1.trucks[0].dist).toBeGreaterThan(s0.trucks[0].dist + 15);
     expect(s1.trucks[1].speed).toBeLessThan(0.2);
@@ -112,30 +112,30 @@ test.describe('Styring (kun gass og sving)', () => {
   test('uten gass blir trucken stående, og den ruller ut når man slipper', async ({ page }) => {
     await open(page);
     await startRace(page);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 2);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     const fast = (await state(page)).trucks[0].speed;
     await advance(page, 6);
     expect((await state(page)).trucks[0].speed).toBeLessThan(fast * 0.5);
   });
 
-  test('A svinger til venstre og D til høyre (spiller 1)', async ({ page }) => {
+  test('1 svinger til venstre og 3 til høyre (spiller 1)', async ({ page }) => {
     await open(page);
     await startRace(page);
     const th0 = (await state(page)).trucks[0].theta;
-    await page.keyboard.down('w');
-    await page.keyboard.down('d');
+    await page.keyboard.down('s');
+    await page.keyboard.down('3');
     await advance(page, 0.8);
-    await page.keyboard.up('d');
+    await page.keyboard.up('3');
     const right = (await state(page)).trucks[0].theta;
     // Sving til høyre sett ovenfra = økende vinkel.
     expect(right).toBeGreaterThan(th0 + 0.4);
-    await page.keyboard.down('a');
+    await page.keyboard.down('1');
     await advance(page, 1.6);
-    await page.keyboard.up('a');
+    await page.keyboard.up('1');
     expect((await state(page)).trucks[0].theta).toBeLessThan(right - 0.8);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
   });
 
   test('piltastene svinger spiller 2, ikke spiller 1', async ({ page }) => {
@@ -156,9 +156,9 @@ test.describe('Styring (kun gass og sving)', () => {
     await open(page);
     await startRace(page);
     const th0 = (await state(page)).trucks[0].theta;
-    await page.keyboard.down('d');
+    await page.keyboard.down('3');
     await advance(page, 1);
-    await page.keyboard.up('d');
+    await page.keyboard.up('3');
     expect((await state(page)).trucks[0].theta).toBeCloseTo(th0, 3);
   });
 
@@ -239,7 +239,7 @@ test.describe('Spillmekanikk', () => {
     await startRace(page);
     await teleport(page, 0, 40, 0);
     await teleport(page, 1, 40, 14); // utenfor asfalten, men innenfor barrieren
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await page.keyboard.down('ArrowUp');
     await advance(page, 0.1);
     expect((await state(page)).trucks[1].onRoad).toBe(false);
@@ -287,10 +287,10 @@ test.describe('Spillmekanikk', () => {
     expect(Math.abs(s.trucks[0].dist - spot.s)).toBeLessThan(10); // ingen gevinst av å kjøre ut
     // Etter redningen kan man kjøre videre.
     const d0 = s.trucks[0].dist;
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 3);
     expect((await state(page)).trucks[0].dist).toBeGreaterThan(d0 + 20);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
   });
 
   test('havner man i fjorden blir man hentet med en gang', async ({ page }) => {
@@ -333,7 +333,7 @@ test.describe('Spillmekanikk', () => {
     await teleport(page, 0, spot.s, spot.side * 8);
     // Pek trucken skrått ut mot gjerdet og gi gass.
     await page.evaluate((sd) => { const t = window.__game.game.trucks[0]; t.theta += sd * 0.6; }, spot.side);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     let maxLat = 0;
     for (let i = 0; i < 8; i++) {
       await advance(page, 0.25);
@@ -347,7 +347,7 @@ test.describe('Spillmekanikk', () => {
     const d0 = s.trucks[0].dist;
     await advance(page, 4);
     expect((await state(page)).trucks[0].dist).toBeGreaterThan(d0 + 20);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
   });
 
   test('mynter plasseres tilfeldig og gir poeng til riktig spiller', async ({ page }) => {
@@ -383,9 +383,9 @@ test.describe('Spillmekanikk', () => {
     await expect(page.locator('#lap-0')).toHaveText('Runde 1/3');
     await teleport(page, 0, s0.trackLength - 30, 0);
     await teleport(page, 1, s0.trackLength - 40, 0);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 2);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     const s1 = await state(page);
     expect(s1.trucks[0].lap).toBe(2);
     expect(s1.trucks[1].lap).toBe(1);
@@ -405,9 +405,9 @@ test.describe('Spillmekanikk', () => {
       const t = window.__game.game.trucks[0];
       t.theta += Math.PI;
     });
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 2.5);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     await expect(page.locator('#wrong-0')).toBeVisible();
     await expect(page.locator('#wrong-1')).toBeHidden();
   });
@@ -417,7 +417,7 @@ test.describe('3D og delt skjerm', () => {
   test('begge halvdeler av skjermen tegner en 3D-scene', async ({ page }) => {
     await open(page);
     await startRace(page);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await page.keyboard.down('ArrowUp');
     await advance(page, 1);
     expect((await state(page)).triangles).toBeGreaterThan(1000);

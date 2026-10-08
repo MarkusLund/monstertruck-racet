@@ -30,7 +30,7 @@ test('terrenget varierer, er deterministisk og veien er slak', async ({ page }) 
 test('trucken følger bakken', async ({ page }) => {
   await open(page);
   await startRace(page);
-  await page.keyboard.down('w');
+  await page.keyboard.down('s');
   let gap = 0, dist = 0;
   const ys = new Set();
   for (let i = 0; i < 40; i++) {
@@ -40,7 +40,7 @@ test('trucken følger bakken', async ({ page }) => {
     ys.add(Math.round(t.y * 10));
     dist = t.dist;
   }
-  await page.keyboard.up('w');
+  await page.keyboard.up('s');
   expect(dist).toBeGreaterThan(100);
   expect(ys.size).toBeGreaterThan(3); // høyden endrer seg underveis
   expect(gap).toBeLessThan(0.01);
@@ -52,9 +52,9 @@ test('hopp gir fortsatt luft, relativt til bakken', async ({ page }) => {
   await teleport(page, 0, 300, 0);
   await advance(page, 0.5);
   expect((await state(page)).trucks[0].air).toBe(false);
-  await page.keyboard.down('Space');
+  await page.keyboard.down('KeyA');
   await advance(page, 0.05);
-  await page.keyboard.up('Space');
+  await page.keyboard.up('KeyA');
   let maxUp = 0, wasAir = false;
   for (let i = 0; i < 20; i++) {
     await advance(page, 0.05);

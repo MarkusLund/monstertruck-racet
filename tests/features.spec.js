@@ -21,7 +21,7 @@ test.describe('Slipstream og strikk', () => {
     await page.evaluate(() => { window.__game.game.newRace(428960272); window.__game.quiet(); }); // fast bane: den skal ha en rett strekning her
     await teleport(page, 0, 100, 0);
     await teleport(page, 1, 80, 0);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await page.keyboard.down('ArrowUp');
     await advance(page, 1.5);
     const s = await state(page);
@@ -38,7 +38,7 @@ test.describe('Slipstream og strikk', () => {
     await startRace(page);
     await teleport(page, 0, 100, -6);
     await teleport(page, 1, 85, 6);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await page.keyboard.down('ArrowUp');
     await advance(page, 1);
     expect((await state(page)).trucks[1].draft).toBe(0);
@@ -65,10 +65,10 @@ test.describe('Mynter gir akselerasjon', () => {
     await startRace(page);
     await page.evaluate(() => { window.__game.game.trucks[0].score = 30; window.__game.game.trucks[1].score = 0; });
     const s0 = await state(page);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await page.keyboard.down('ArrowUp');
     await advance(page, 1);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     await page.keyboard.up('ArrowUp');
     const s1 = await state(page);
     const rich = s1.trucks[0].dist - s0.trucks[0].dist;
@@ -82,7 +82,7 @@ test.describe('Mynter gir akselerasjon', () => {
     await startRace(page);
     await page.evaluate(() => { window.__game.game.trucks[0].score = 20; window.__game.game.trucks[1].score = 200; });
     const s0 = await state(page);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await page.keyboard.down('ArrowUp');
     await advance(page, 1);
     const s1 = await state(page);
@@ -187,7 +187,7 @@ test.describe('Power-ups', () => {
     const length = await L(page);
     await teleport(page, 0, length - 50, 0, -1);
     await page.evaluate((len) => { window.__game.teleport(1, 200, 0, 0); window.__game.addBarricade(len - 12); }, length);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     let maxDist = -Infinity, warned = false;
     for (let i = 0; i < 20; i++) {
       await advance(page, 0.2);
@@ -195,7 +195,7 @@ test.describe('Power-ups', () => {
       maxDist = Math.max(maxDist, t.dist);
       warned = warned || t.msg.includes('Veisperre');
     }
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     expect(maxDist).toBeLessThan(-12);
     expect(warned).toBe(true);
     await advance(page, 12);
@@ -208,9 +208,9 @@ test.describe('Power-ups', () => {
     const length = await L(page);
     await teleport(page, 0, length - 40, 14, -1);
     await page.evaluate((len) => { window.__game.teleport(1, 200, 0, 0); window.__game.addBarricade(len - 20); }, length);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 4);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     expect((await state(page)).trucks[0].dist).toBeGreaterThan(-5);
   });
 
@@ -224,9 +224,9 @@ test.describe('Power-ups', () => {
       window.__game.addBarricade(len - 15);
       window.__game.game.trucks[0].shield = 8;
     }, length);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await advance(page, 3);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     const s = await state(page);
     expect(s.trucks[0].dist).toBeGreaterThan(-12);
     expect(s.trucks[0].shield).toBe(0);
@@ -257,7 +257,7 @@ test.describe('Kollisjon, hopp og tilfeldige baner', () => {
     await startRace(page);
     await teleport(page, 0, 10, 0);
     await teleport(page, 1, 40, 0);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     let minDist = Infinity, pushed = 0;
     for (let i = 0; i < 40; i++) {
       await advance(page, 0.1);
@@ -265,7 +265,7 @@ test.describe('Kollisjon, hopp og tilfeldige baner', () => {
       minDist = Math.min(minDist, Math.hypot(s.trucks[0].x - s.trucks[1].x, s.trucks[0].z - s.trucks[1].z));
       pushed = Math.max(pushed, s.trucks[1].speed);
     }
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     expect(minDist).toBeGreaterThan(4.4);
     expect(pushed).toBeGreaterThan(3); // den stillestående ble dyttet
   });
@@ -278,7 +278,7 @@ test.describe('Kollisjon, hopp og tilfeldige baner', () => {
     const j = jumps[0];
     await page.evaluate(() => window.__game.game.boxes.forEach((b) => { b.cooldown = 1e9; }));
     await teleport(page, 0, j.s0 - 22, 0);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     let maxY = 0, wasAir = false, landed = false;
     for (let i = 0; i < 40; i++) {
       await advance(page, 0.1);
@@ -287,7 +287,7 @@ test.describe('Kollisjon, hopp og tilfeldige baner', () => {
       if (t.air) wasAir = true;
       if (wasAir && !t.air && t.y === t.ground) landed = true;
     }
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     expect(wasAir).toBe(true);
     expect(maxY).toBeGreaterThan(1.5);
     expect(landed).toBe(true);

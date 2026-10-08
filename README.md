@@ -15,8 +15,10 @@ Du kan også bygge en statisk versjon med `npm run build` (legges i `dist/`) og 
 
 |        | DualSense                      | Spiller 1 (tastatur) | Spiller 2 (tastatur) |
 |--------|--------------------------------|----------------------|----------------------|
-| Gass   | R2                             | W                    | ↑                    |
-| Sving  | Venstre stikke (eller d-pad)   | A / D                | ← / →                |
+| Gass   | R2                             | S                    | høyre ⌥              |
+| Sving  | Venstre stikke (eller d-pad)   | 1 / 3                | ← / →                |
+| Rygg   | L2                             | 2                    | ↓                    |
+| Hopp   | □                              | A                    | høyre ⌘              |
 | Start  | ✕ / Options                    | Enter / Mellomrom    | Enter / Mellomrom    |
 
 - Koble DualSense-kontrollerne til Macen via Bluetooth. Nettlesere viser ikke kontrollere før du har trykket en knapp på dem mens spillet er åpent. Den første kontrolleren blir spiller 1, den andre spiller 2.
@@ -42,7 +44,7 @@ Du kan også bygge en statisk versjon med `npm run build` (legges i `dist/`) og 
 
 1. På vertsmaskinen: `npm start`. Spillet åpner på `http://localhost:5173`. Maskinen som åpner `localhost` er alltid verten.
 2. Startskjermen viser adressene andre kan bruke (samme nett, f.eks. `http://192.168.1.23:5173`). Del den med kollegaene.
-3. Hver fjernspiller åpner adressen og får en farge (rød, blå, grønn, gul). Styring: `W A D`, piltaster eller kontroller (R2 og venstre stikke).
+3. Hver fjernspiller åpner adressen og får en farge (rød, blå, grønn, gul). Styring: `1 2 3` (venstre/rygge/høyre) + `S` gass + `A` hopp, piltaster + høyre ⌥ (gass) + høyre ⌘ (hopp), eller kontroller (R2 og venstre stikke).
 4. Verten starter løpet med `Enter`. Verten spiller selv som spiller 1, og `P` slår lokal spiller 2 av og på (to på samme tastatur). Maks 4 trucker totalt.
 5. Alle ser sin egen truck i egen nettleser. Verten ser alle spillere på delt skjerm (1–4 ruter), med minikart, runder igjen og stilling i midten.
 6. **Tilskuermodus:** kobler noen til midt i et løp (eller løpet er fullt), ser de alle truckene på delt skjerm med minikart og stilling, og blir med i neste løp. Legg til `?watch` i adressen for en ren tilskuerskjerm (f.eks. en TV) som aldri tar en plass i løpet.

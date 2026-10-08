@@ -98,13 +98,13 @@ test.describe('Treff og effekter', () => {
     await open(page);
     await startRace(page);
     await teleport(page, 0, 40, 0);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     await run(page, 1.5);
     expect((await fxState(page)).live).toBeGreaterThan(3);
     await page.evaluate(() => { window.__game.teleport(0, 40, 14); });
     await run(page, 1.5);
     expect((await fxState(page)).live).toBeGreaterThan(10);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
   });
 
   test('partikkelpoolen er begrenset: mange eksplosjoner gir ingen feil', async ({ page }) => {
@@ -126,9 +126,9 @@ test.describe('Rekorder', () => {
     await startRace(page);
     const L = await page.evaluate(() => window.__game.game.track.length);
     await teleport(page, 0, L - 12, 0, 2);
-    await page.keyboard.down('w');
+    await page.keyboard.down('s');
     for (let i = 0; i < 20 && (await state(page)).state === 'racing'; i++) await advance(page, 0.5);
-    await page.keyboard.up('w');
+    await page.keyboard.up('s');
     expect((await state(page)).state).toBe('finished');
   };
 
