@@ -23,7 +23,7 @@ Playwright starter selv en egen Vite på port 5199 (`reuseExistingServer`) og br
 ## Arkitektur
 
 ### Simuleringen er ren og delt
-`src/game.js` (`Game`) og det den importerer (`truck.js`, `track.js`, `terrain.js`, `fences.js`, `pads.js`, `powerups.js`) er ren spillogikk uten DOM eller three.js. Den samme koden kjøres både i nettleseren (`src/main.js`) og i Cloudflare-workeren (`server/worker.js`). Ikke importer three.js, `window` eller DOM i disse filene. Alt som er visuelt ligger i `render.js`, `scenery.js`, `fencemesh.js`, `fx.js`, `countdown.js` og `camera.js` (f.eks. `fences.js` = kollisjonslogikk, `fencemesh.js` = geometri).
+`src/game.js` (`Game`) og det den importerer (`truck.js`, `track.js`, `terrain.js`, `fences.js`, `pads.js`, `powerups.js`) er ren spillogikk uten DOM eller three.js. Den samme koden kjøres både i nettleseren (`src/main.js`) og i Cloudflare-workeren (`server/worker.js`). Ikke importer three.js, `window` eller DOM i disse filene. Alt som er visuelt ligger i `render.js`, `scenery.js`, `fencemesh.js`, `fx.js`, `countdown.js` og `camera.js` (f.eks. `fences.js` = kollisjonslogikk, `fencemesh.js` = geometri). Lyden ligger i `sound.js`, `engine-sound.js` og `music.js`.
 
 - Fast tidssteg `DT = 1/60`. `game.step(inputs)` tar én input per truck (`{ throttle, steer, brake, jump }`).
 - Tilstander: `menu` → `countdown` → `racing` → `finished`.
@@ -41,6 +41,13 @@ Klientsiden (`clientMessage`/`clientStep` i `main.js`) er den samme i begge modi
 `src/net.js`: WebSocket for lobby og signalering, pluss forsøk på direkte WebRTC-datakanal (uordnet, uten gjensending) for `snap` og `in`. Faller tilbake til WebSocket. Øyeblikksbilder har løpenummer `q`, og gamle bilder kastes.
 
 Cloudflare-lobbyen (kun `worker.js`; relayen/verten støtter den ikke, og klienten faller tilbake til gammel `start`-oppførsel når `lobby` mangler `rdy`): `ready` (klient → server) veksler spillerens klar-markering (Enter/kontroller-bekreft), og løpet starter når alle ikke-tilskuere er klare (alene: umiddelbart). `go` («start nå», tasten `S`) tvinger start. `lobby` har feltet `rdy` (0/1 per spiller, samme rekkefølge som `you`). `start` brukes fortsatt for «finished → nytt løp». En spiller med `pid` som kobler til mens et løp pågår overtar siste AI-truck (`assign` + `lobby`); finnes ingen, ser hen på som før.
+
+### Lyd
+Alt er syntetisert med Web Audio (ingen lydfiler) og startes av første tastetrykk/klikk (`sound.unlock`). `main.js` kaller `sound.event(e)` for hver hendelse og `sound.update(dt, game, { listeners, pans, throttle })` hver frame. Lytterne er de lokale spillernes trucker; andre truckers motorer og effekter dempes og panoreres etter avstand og retning.
+- `engine-sound.js`: `EngineModel` (turtall, automatgir, last; ren logikk) og `EngineVoice` (lydgrafen: en løkke med V8-tenninger spilt av med fart etter turtallet, gjennom faste eksosresonanser).
+- `music.js`: lookahead-sequencer på lydklokka. `makeSong(seed)` lager låten fra banens frø.
+- Lydkoden må aldri bruke `Math.random` (testene seeder den for å få like baner), men den seedede `rng` fra `engine-sound.js`.
+- Feil i lydkoden fanges i `Sound.update`/`Sound.event` og i sequenceren, så de aldri stopper spill-løkka eller gjentar et steg.
 
 ### Øyeblikksbilder
 30 per sekund (hvert andre steg). `Game.snapshot()`/`applySnapshot()` i `game.js` serialiserer kompakt. Truck-felt som klienter trenger må stå i `TRUCK_FIELDS`. `lerpSnapshot` (net.js) interpolerer feltene i `SMOOTH`. Klienten spiller av fra en jitterbuffer der forsinkelsen tilpasses p95 av gapene mellom bildene (`updateSnapDelay` i main.js).

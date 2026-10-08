@@ -101,4 +101,6 @@ Playwright-testene simulerer to DualSense-kontrollere (mocket Gamepad API) og ta
 - `src/countdown.js`: 3D-tall for nedtellingen
 - `src/net.js`: WebSocket-klient og glatting av øyeblikksbilder
 - `server/relay.js`: relay for flerspiller (Vite-plugin)
-- `src/sound.js`: syntetiserte lyder og motorbrumming
+- `src/sound.js`: lydmiksen, effekter, plassering (avstand og retning fra hver spillers truck) og styring av musikken
+- `src/engine-sound.js`: motorlyd (V8 bygget av enkelttenninger, automatgir, last, eksosresonanser)
+- `src/music.js`: prosedyremusikk (ny låt for hver bane, opptrapping på siste runde, fanfare i mål)

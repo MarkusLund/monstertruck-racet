@@ -19,6 +19,7 @@
       <canvas id="game"></canvas>
       <div id="views"></div>
       <div id="racecenter" class="hidden"></div>
+      <div id="toast" class="toast"></div>
 
       <div id="menu" class="overlay">
         <div class="panel">
@@ -48,16 +49,16 @@
               </table>
             </div>
           </div>
-          <div class="lobby" id="lobby"></div>
           <div class="extrapads">
             <div class="pad-status" id="pad-status-2"></div>
             <div class="pad-status" id="pad-status-3"></div>
           </div>
           <p class="tips">Spiller 3 og 4 bruker kontroller (PS5 DualSense eller Switch 2, én per spiller) og blir med automatisk når de kobles til.</p>
+          <div class="lobby" id="lobby"></div>
           <p class="aiopts"><b id="ai-count"></b> <kbd>N</kbd> / <kbd>↑</kbd><kbd>↓</kbd> på kontroller &nbsp;·&nbsp; <b id="ai-level"></b> <kbd>V</kbd> / <kbd>←</kbd><kbd>→</kbd> på kontroller</p>
           <p class="tips">Kjør gjennom <b>?</b>-boksene for turbo, skjold, raketter og veisperrer. Ligger du bak, får du bedre power-ups.<br />
             Kjør tett bak motstanderen for slipstream, og ta rampene for å hoppe. Jo flere mynter, jo bedre akselerasjon. Ny bane hver gang!<br />
-            Tastatur og kontroller kan blandes. <kbd>P</kbd> slår lokal spiller 2 av og på, så flere kan bli med fra sine egne Mac-er.</p>
+            Tastatur og kontroller kan blandes. <kbd>P</kbd> slår lokal spiller 2 av og på, så flere kan bli med fra sine egne Mac-er. <kbd>M</kbd> slår musikken av og på.</p>
           <p class="start blink">Trykk <kbd>Enter</kbd> / <kbd>Mellomrom</kbd> eller <kbd>✕</kbd> / <kbd>Options</kbd> for å starte</p>
         </div>
       </div>
@@ -71,7 +72,7 @@
           <p class="roomlink hidden" id="client-room">Send lenken til andre: <b id="client-roomlink"></b></p>
           <ul class="players hidden" id="client-players"></ul>
           <p class="tips hidden" id="client-help"><kbd>Enter</kbd>: klar · <kbd>S</kbd>: start nå · <kbd>N</kbd>/<kbd>V</kbd>: AI og vanskelighet. Løpet starter når alle er klare.</p>
-          <p class="tips">Når verten starter løpet, styrer du med <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> (<kbd>S</kbd> gass, <kbd>A</kbd> hopp) eller piltastene (<kbd>Høyre ⌥</kbd> gass, <kbd>Høyre ⌘</kbd> hopp) eller en kontroller.</p>
+          <p class="tips">Når verten starter løpet, styrer du med <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> (<kbd>S</kbd> gass, <kbd>A</kbd> hopp) eller piltastene (<kbd>Høyre ⌥</kbd> gass, <kbd>Høyre ⌘</kbd> hopp) eller en kontroller. <kbd>M</kbd> slår musikken av og på.</p>
         </div>
       </div>
 

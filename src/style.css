@@ -28,6 +28,9 @@ body.client #hud { display: none; }
 
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 16, .72); backdrop-filter: blur(3px); overflow: auto; }
 .overlay.hidden { display: none; }
+.toast { position: absolute; top: 14px; left: 50%; transform: translate(-50%, -8px); z-index: 20; padding: 6px 14px; border-radius: 999px;
+  background: rgba(8, 10, 16, .8); color: #fff; font-weight: 700; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
 .panel { background: #1b2030; border: 3px solid #0a0c11; border-radius: 18px; padding: 24px 36px; text-align: center;
   box-shadow: 0 20px 60px rgba(0,0,0,.5); max-width: 900px; margin: 8px; }
 h1 { margin: 0 0 6px; font-size: 52px; font-weight: 900; letter-spacing: 2px; color: #ffd400;

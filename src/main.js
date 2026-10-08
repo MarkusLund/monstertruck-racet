@@ -2,7 +2,7 @@ import { Game, DT, LAPS, MAX_PLAYERS, BARRICADE_HALF_WIDTH } from './game.js';
 import { Input, PAD_SLOTS } from './input.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
-import { MAX_SPEED, driftTier } from './truck.js';
+import { driftTier } from './truck.js';
 import { groundHeight } from './terrain.js';
 import { Net, lerpSnapshot } from './net.js';
 import { loadRecords, submitTime } from './records.js';
@@ -75,9 +75,10 @@ const host = {
 
 function lobbySlots() {
   const slots = [];
+  // Spiller 1–2 følger P-valget (tastatur eller kontroller). Spiller 3–4 er kun kontrollere: én kontroller per spiller.
   for (let k = 0; k < host.localCount; k++) slots.push({ kind: 'local', k });
-  for (const p of host.peers.values()) {
   for (let k = 2; k < PAD_SLOTS; k++) if (input.pads[k]) slots.push({ kind: 'local', k });
+  for (const p of host.peers.values()) {
     if (slots.length >= MAX_PLAYERS) break;
     if (p.watch) continue;
     slots.push({ kind: 'peer', id: p.id });
@@ -177,7 +178,7 @@ function clientMessage(m) {
     if (client.slot !== null && client.status !== 'full') client.status = 'playing';
     else if (client.slot === null && client.status === 'lobby') client.status = 'spectate';
     for (const e of m.s.ev || []) {
-      if (e.truck === undefined || e.truck === client.slot || e.other === client.slot || e.type === 'finish') sound.play(e.type, e);
+      sound.event(e); // lyden plasseres etter avstand og retning fra vår egen truck
       renderer.fx.onEvent(e, game);
     }
   }
@@ -224,7 +225,7 @@ function simStep() {
   });
   game.step(lastInputs);
   for (const e of game.events) {
-    sound.play(e.type, e);
+    sound.event(e);
     renderer.fx.onEvent(e, game);
   }
   if (host.peers.size) host.evBuf.push(...game.events);
@@ -495,18 +496,35 @@ function renderClientPanel() {
   } else setText(you, '');
 }
 
-function updateEngine() {
+// Lyd: lytterne er truckene til spillerne foran denne skjermen. På delt skjerm panoreres hver spillers lyd mot sin
+// del av skjermen. En tilskuer har ingen egen truck og hører alle litt.
+function updateAudio(dt, views) {
   if (!sound.ctx) return;
-  const racing = game.state === 'racing' || game.state === 'countdown';
-  if (role === 'client') {
-    const t = game.trucks[clamp(client.slot ?? 0, 0, game.trucks.length - 1)];
-    sound.engine(Math.min(1, t.speed / MAX_SPEED), lastInputs[0]?.throttle || 0, racing && client.status === 'playing');
-    return;
-  }
-  const speed = game.trucks.reduce((a, t) => a + t.speed, 0) / game.trucks.length;
-  const throttle = Math.max(0, ...lastInputs.map((x) => x.throttle));
-  sound.engine(Math.min(1, speed / MAX_SPEED), throttle, racing && game.state !== 'finished');
+  const listeners = role === 'client'
+    ? (client.slot !== null && client.status === 'playing' && !spectating() ? [client.slot] : [])
+    : host.slots.flatMap((s, i) => (s.kind === 'local' && i < game.trucks.length ? [i] : []));
+  const rects = layoutViews(views.length);
+  const pans = [];
+  views.forEach((ti, k) => { pans[ti] = views.length > 1 ? (rects[k].x + rects[k].w / 2 - 0.5) * 1.2 : 0; });
+  // Gassen er kjent for alle trucker hos verten, men bare for vår egen hos en klient (resten anslås fra farten).
+  const throttle = role === 'client' ? { [client.slot]: lastInputs[0]?.throttle } : lastInputs.map((x) => x.throttle);
+  sound.update(dt, game, { listeners, pans, throttle });
 }
+
+// M slår musikken av og på (huskes i nettleseren). Lyden låses opp av første tastetrykk eller klikk.
+let toastTimer = 0;
+function toast(text) {
+  const el = $('toast');
+  setText(el, text);
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1400);
+}
+window.addEventListener('keydown', (e) => {
+  sound.unlock();
+  if (e.code === 'KeyM' && !e.repeat) toast(sound.toggleMusic() ? 'Musikk på' : 'Musikk av');
+});
+window.addEventListener('pointerdown', () => sound.unlock());
 
 const dbg = new URLSearchParams(location.search).has('debug') ? document.body.appendChild(Object.assign(document.createElement('pre'), { style: 'position:fixed;left:6px;bottom:6px;z-index:99;margin:0;padding:4px 6px;background:#000a;color:#8f8;font:11px monospace;pointer-events:none' })) : null;
 let fpsN = 0, fpsT = performance.now(), fps = 0;
@@ -516,7 +534,7 @@ function updateDebug(now) {
   fps = Math.round(fpsN * 1000 / (now - fpsT)); fpsN = 0; fpsT = now;
   const g = client.gaps.slice().sort((x, y) => x - y);
   const pc = (p) => (g.length ? g[Math.min(g.length - 1, Math.floor(g.length * p))] : 0).toFixed(0);
-  dbg.textContent = `fps ${fps}  dpr ${window.devicePixelRatio}  kvalitet ${(renderer.quality ?? 1).toFixed(2)}  canvas ${canvas.width}x${canvas.height}\nsnap-gap p50 ${pc(0.5)} p90 ${pc(0.9)} p99 ${pc(0.99)} ms  buffer ${client.buf.length}  forsinkelse ${snapDelay.toFixed(1)}  tomt ${client.dry}`;
+  dbg.textContent = `fps ${fps}  dpr ${window.devicePixelRatio}  kvalitet ${(renderer.quality ?? 1).toFixed(2)}  canvas ${canvas.width}x${canvas.height}\nsnap-gap p50 ${pc(0.5)} p90 ${pc(0.9)} p99 ${pc(0.99)} ms  buffer ${client.buf.length}  forsinkelse ${snapDelay.toFixed(1)}  tomt ${client.dry}\nlyd ${sound.ctx ? sound.ctx.state : 'låst'}  ${sound.info(role === 'client' ? client.slot ?? 0 : 0)}`;
 }
 
 let acc = 0, last = performance.now(), clock = 0;
@@ -536,7 +554,7 @@ function frame(now) {
   if (!manual) renderer.adaptQuality(now);
   renderer.draw(game, dt, clock, views);
   updateHud(views);
-  updateEngine();
+  updateAudio(dt, views);
   if (dbg) updateDebug(now);
   requestAnimationFrame(frame);
 }
@@ -545,7 +563,7 @@ updateHud();
 
 // Hooks for automated tests.
 window.__game = {
-  game, input, renderer, role, host, client, setAi,
+  game, input, renderer, role, host, client, setAi, sound,
   // Som advance, men uten å tegne mellom hvert steg (raskt nok for lange simuleringer).
   simulate(seconds) {
     const n = Math.round(seconds / DT);

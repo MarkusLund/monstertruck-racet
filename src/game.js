@@ -347,7 +347,7 @@ export class Game {
     const done = Math.max(0, Math.floor(t.dist / this.track.length));
     if (done > t.lapsDone && !t.finished) {
       t.lapsDone = done;
-      if (done < LAPS) this.emit({ type: 'lap', truck: t.id });
+      if (done < LAPS) this.emit({ type: 'lap', truck: t.id, lap: done });
     }
     // Mynter dukker opp igjen når en ny runde starter for den som leder.
     const lead = Math.max(...this.trucks.map((q) => Math.floor(Math.max(0, q.dist) / this.track.length)));
