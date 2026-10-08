@@ -22,7 +22,25 @@ Du kan også bygge en statisk versjon med `npm run build` (legges i `dist/`) og 
 | Start  | ✕ / Options                    | Enter / Mellomrom    | Enter / Mellomrom    |
 
 - Koble DualSense-kontrollerne til Macen via Bluetooth. Nettlesere viser ikke kontrollere før du har trykket en knapp på dem mens spillet er åpent. Den første kontrolleren blir spiller 1, den andre spiller 2.
-- Tastatur og kontroller kan blandes fritt. `Esc` går tilbake til startskjermen.
+### Nintendo Switch 2-kontrollere på Mac
+
+Spillet støtter opptil **4 kontrollere samtidig, én per spiller** (PS5 DualSense og Switch 2 kan blandes). Spiller 1–2 kan også bruke tastatur. Spiller 3–4 er kun kontrollere og blir med automatisk når de kobles til.
+
+Macen ser ikke Switch 2-kontrollere som spillkontrollere av seg selv. Du trenger den gratis menylinjeappen [switch2mac](https://github.com/Peterksharma/switch2mac) («Finally the Controller Works»), som gjør dem om til virtuelle HID-gamepads. Støttet: Pro Controller 2, Joy-Con 2 og NSO GameCube-kontrolleren. Krever macOS 15 (Sequoia) eller nyere på Apple Silicon.
+
+1. Last ned og installer switch2mac (se releases i GitHub-repoet) i Programmer-mappen, og start den. Den ligger i menylinjen.
+2. Gi appen Bluetooth-tilgang når macOS spør. Det er den eneste tillatelsen den trenger.
+3. **Hold Sync-knappen** på kontrolleren (ved USB-C-porten) til spillerlysene begynner å sveipe. Kontrolleren kobles til appen og ikke via Bluetooth-innstillingene i macOS.
+4. Gjenta for hver kontroller (opptil 4). Etter første paring holder det å trykke en knapp for å koble til igjen.
+5. Åpne spillet og **trykk en knapp** på hver kontroller. Nettlesere viser ikke kontrollere før de er rørt. Startskjermen viser «✓ Switch 2 tilkoblet» per spiller. Den første kontrolleren blir spiller 1, den neste spiller 2, og så videre.
+
+Styring på Switch 2: **ZR** gass, **ZL** rygg/brems, **Y** hopp (knappen til venstre), **venstre stikke** eller d-pad for sving, **A** eller **+** for å starte, og d-pad opp/ned og venstre/høyre i menyen for AI-valg.
+
+Feilsøking: kontrolleren kobler seg av etter noen sekunder hvis switch2mac ikke kjører. Vises den ikke i spillet, trykk en knapp på den med spillfanen i fokus, og sjekk at den står som tilkoblet i switch2mac. Åpne `?debug` hvis knappene virker feil.
+
+Merk: Mappingen for Switch 2 er laget etter standard Gamepad-mapping, med en reserve for Nintendos rå HID-rekkefølge (A = knapp 1, hat-bryter som akse 9) hvis nettleseren ikke gjenkjenner enheten. Den er testet med mocket Gamepad API, ikke med fysisk kontroller.
+
+- Tastatur og kontroller kan blandes fritt. `Esc` går tilbake til startskjermen. `M` slår musikken av og på (huskes i nettleseren).
 
 ## Spillet
 

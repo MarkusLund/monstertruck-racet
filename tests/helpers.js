@@ -13,7 +13,7 @@ export async function mockGamepads(page) {
     });
     Object.defineProperty(navigator, 'getGamepads', { value: () => pads.slice(), configurable: true });
     window.__pads = {
-      connect(i) { pads[i] = mk(i); },
+      connect(i, over = {}) { pads[i] = Object.assign(mk(i), over); },
       disconnect(i) { pads[i] = null; },
       set(i, btn, value) { pads[i].buttons[btn] = { pressed: value > 0.5, touched: value > 0, value }; },
       axis(i, a, value) { pads[i].axes[a] = value; },

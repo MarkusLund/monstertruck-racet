@@ -142,3 +142,6 @@ body.client .rocket-warn { font-size: 24px; top: 18%; }
 .players .ready { color: #5f5; }
 .players .waiting { color: #aaa; }
 .roomlink.hidden, .players.hidden, .tips.hidden { display: none; }
+
+.extrapads { display: flex; gap: 24px; justify-content: center; margin-top: 8px; }
+.extrapads .pad-status { margin-bottom: 2px; }

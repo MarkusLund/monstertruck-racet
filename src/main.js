@@ -1,5 +1,5 @@
 import { Game, DT, LAPS, MAX_PLAYERS, BARRICADE_HALF_WIDTH } from './game.js';
-import { Input } from './input.js';
+import { Input, PAD_SLOTS } from './input.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
 import { MAX_SPEED, driftTier } from './truck.js';
@@ -77,6 +77,7 @@ function lobbySlots() {
   const slots = [];
   for (let k = 0; k < host.localCount; k++) slots.push({ kind: 'local', k });
   for (const p of host.peers.values()) {
+  for (let k = 2; k < PAD_SLOTS; k++) if (input.pads[k]) slots.push({ kind: 'local', k });
     if (slots.length >= MAX_PLAYERS) break;
     if (p.watch) continue;
     slots.push({ kind: 'peer', id: p.id });
@@ -366,10 +367,10 @@ function updateHud(views = currentViews()) {
   $('client-panel').classList.toggle('hidden', !clientPanel);
 
   if (role === 'host' && game.state === 'menu') {
-    for (const i of [0, 1]) {
+    for (let i = 0; i < PAD_SLOTS; i++) {
       const pad = input.padInfo(i);
       const ps = $(`pad-status-${i}`);
-      setText(ps, pad ? `✓ ${pad.name} tilkoblet` : 'Ingen kontroller – trykk en knapp på kontrolleren for å koble til');
+      setText(ps, pad ? `✓ ${pad.name} tilkoblet` : i < 2 ? 'Ingen kontroller – trykk en knapp på kontrolleren for å koble til' : 'Ingen kontroller');
       ps.classList.toggle('on', !!pad);
     }
     $('ctl-p2').classList.toggle('off', host.localCount < 2);
@@ -442,7 +443,7 @@ function updateHud(views = currentViews()) {
 let lobbyKey = '';
 function renderLobby() {
   const slots = lobbySlots();
-  const local = (k) => (k === 0 ? 'Host · W A D / kontroller 1' : 'Host · piltaster / kontroller 2');
+  const local = (k) => (k === 0 ? 'Host · S 1 2 3 / kontroller 1' : k === 1 ? 'Host · piltaster / kontroller 2' : `Host · kontroller ${k + 1}`);
   const cells = Array.from({ length: MAX_PLAYERS }, (_, i) => {
     const s = slots[i];
     if (!s) return `<div class="slot empty c${i}"><b>Spiller ${i + 1}</b><span>Ledig</span></div>`;
