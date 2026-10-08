@@ -2,7 +2,7 @@
 
 3D monstertruck-racing for 1–4 spillere (delt skjerm og/eller flere Mac-er), litt som første Mario Kart. Laget med [three.js](https://threejs.org/) og Gamepad API. Kjører i nettleseren på macOS (Chrome eller Safari).
 
-**Spill nå:** DEMO_URL
+**Spill nå:** https://monstertruck-racet.markuslund92.workers.dev
 
 - Tilfeldig generert bane for hvert løp, med bakker, ramper, fjord og fjell
 - 1–4 spillere på delt skjerm, eller flere maskiner via nettleseren (Cloudflare Workers eller lokal relay)
