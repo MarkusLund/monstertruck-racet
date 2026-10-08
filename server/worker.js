@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Game, DT, MAX_PLAYERS } from '../src/game.js';
+import { createAI, LEVELS } from '../src/ai.js';
 
 // Spillserver på Cloudflare: ett Durable Object per rom (?room=...) kjører hele simuleringen (60 Hz) og
 // sender 30 øyeblikksbilder i sekundet til alle spillere. Alle er vanlige klienter (se src/net.js og
@@ -9,6 +10,8 @@ const IDLE = { throttle: 0, steer: 0, brake: 0, jump: false };
 // Hvor lenge et tomt rom holder på løpet (pauset), så en spiller som laster siden på nytt kommer tilbake til samme løp.
 const EMPTY_GRACE = 60_000;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// Nøkkel for AI-plasser i slots (ingen nettleser har en nøkkel som starter med @).
+const AI_KEY = '@ai';
 
 export class GameRoom extends DurableObject {
   constructor(ctx, env) {
@@ -18,6 +21,9 @@ export class GameRoom extends DurableObject {
     // Nøkkel per truck i pågående løp. Nøkkelen er nettleserens faste id (?pid=, lagret i localStorage), så en spiller
     // som laster siden på nytt eller kobler til igjen fra samme nettleser får tilbake styringen over sin truck.
     this.slots = [];
+    this.ai = 1; // ønsket antall AI-motstandere (0–3) og nivå, felles for rommet
+    this.lvl = 1;
+    this.ais = []; // AI-objekt per truck i pågående løp (null for spillere)
     this.emptyTimer = null;
     this.nextId = 1;
     this.evBuf = [];
@@ -47,7 +53,7 @@ export class GameRoom extends DurableObject {
     for (const [oid, o] of this.peers) {
       if (o.key !== key) continue;
       o.key = `#${oid}`;
-      if (this.game.state !== 'menu') this.send(o.ws, { t: 'lobby', you: -1, n: this.game.trucks.length, state: this.game.state });
+      if (this.game.state !== 'menu') this.send(o.ws, { t: 'lobby', you: -1, n: this.game.trucks.length, state: this.game.state, ai: this.slotAi(), lvl: this.lvl });
     }
     this.peers.set(id, { ws, input: IDLE, key });
     clearTimeout(this.emptyTimer);
@@ -56,8 +62,8 @@ export class GameRoom extends DurableObject {
     if (this.game.state === 'menu') this.sendLobby();
     else {
       const slot = this.slots.indexOf(key);
-      this.send(ws, { t: 'lobby', you: slot, n: this.game.trucks.length, state: this.game.state });
-      if (slot >= 0) this.send(ws, { t: 'assign', slot });
+      this.send(ws, { t: 'lobby', you: slot, n: this.game.trucks.length, state: this.game.state, ai: this.slotAi(), lvl: this.lvl });
+      if (slot >= 0) this.send(ws, { t: 'assign', slot, ai: this.slotAi() });
     }
     ws.addEventListener('message', (e) => this.message(id, e.data));
     const leave = () => this.leave(id);
@@ -84,6 +90,12 @@ export class GameRoom extends DurableObject {
     } else if (m.t === 'watch') {
       p.watch = true; // ren tilskuerskjerm (?watch), tar aldri en plass i løpet
       if (this.game.state === 'menu') this.sendLobby();
+    } else if (m.t === 'ai') {
+      if (this.game.state === 'menu' && Number.isFinite(m.n) && Number.isFinite(m.lvl)) {
+        this.ai = ((Math.round(m.n) % MAX_PLAYERS) + MAX_PLAYERS) % MAX_PLAYERS;
+        this.lvl = ((Math.round(m.lvl) % LEVELS.length) + LEVELS.length) % LEVELS.length;
+        this.sendLobby();
+      }
     } else if (m.t === 'start') {
       const g = this.game;
       if (g.state === 'menu' || (g.state === 'finished' && g.stateTime > 1.2)) this.startRace();
@@ -94,20 +106,28 @@ export class GameRoom extends DurableObject {
 
   players() { return [...this.peers.values()].filter((p) => !p.watch).map((p) => p.key).slice(0, MAX_PLAYERS); }
 
+  // AI-motstandere fyller opp ledige plasser etter spillerne.
+  botCount() { return Math.min(this.ai, MAX_PLAYERS - this.players().length); }
+
+  slotAi() { return this.slots.filter((k) => k === AI_KEY).length; }
+
   peerByKey(key) { for (const p of this.peers.values()) if (p.key === key) return p; return null; }
 
   sendLobby() {
     const keys = this.players();
-    for (const p of this.peers.values()) this.send(p.ws, { t: 'lobby', you: keys.indexOf(p.key), n: keys.length, state: this.game.state });
+    for (const p of this.peers.values()) this.send(p.ws, { t: 'lobby', you: keys.indexOf(p.key), n: keys.length + this.botCount(), state: this.game.state, ai: this.botCount(), lvl: this.lvl });
   }
 
   startRace() {
-    this.slots = this.players();
-    if (!this.slots.length) return; // bare tilskuere i rommet
+    const players = this.players();
+    if (!players.length) return; // bare tilskuere i rommet
+    this.slots = [...players, ...Array(this.botCount()).fill(AI_KEY)];
     this.game.start(this.slots.length);
+    this.ais = this.slots.map((key, i) => (key === AI_KEY ? createAI(this.game.seed, i, this.lvl) : null));
     this.evBuf = [];
     this.acc = 0;
-    this.slots.forEach((key, i) => this.send(this.peerByKey(key).ws, { t: 'assign', slot: i }));
+    const ai = this.slotAi();
+    this.slots.forEach((key, i) => { if (key !== AI_KEY) this.send(this.peerByKey(key).ws, { t: 'assign', slot: i, ai }); });
     for (const p of this.peers.values()) if (!p.watch && !this.slots.includes(p.key)) this.send(p.ws, { t: 'full' });
   }
 
@@ -115,6 +135,7 @@ export class GameRoom extends DurableObject {
   restart() {
     this.game = new Game();
     this.slots = [];
+    this.ais = [];
     this.evBuf = [];
     this.acc = 0;
     this.sendLobby();
@@ -137,7 +158,10 @@ export class GameRoom extends DurableObject {
     while (this.acc >= DT && n < 6) {
       this.acc -= DT;
       n++;
-      const inputs = game.trucks.map((_, i) => this.peerByKey(this.slots[i])?.input || IDLE);
+      const inputs = game.trucks.map((_, i) => {
+        if (this.slots[i] === AI_KEY) return game.state === 'racing' ? this.ais[i].input(game, i) : IDLE;
+        return this.peerByKey(this.slots[i])?.input || IDLE;
+      });
       game.step(inputs);
       this.evBuf.push(...game.events);
       game.events.length = 0;

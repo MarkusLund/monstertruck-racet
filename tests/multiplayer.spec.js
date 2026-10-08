@@ -9,7 +9,7 @@ async function openHost(browser, room) {
   const page = await ctx.newPage();
   page.errors = [];
   page.on('pageerror', (e) => page.errors.push(e.message));
-  await page.goto(`/?room=${room}&role=host&manual=1`);
+  await page.goto(`/?room=${room}&role=host&manual=1&ai=0`);
   await wait(page, () => !!window.__game);
   return page;
 }

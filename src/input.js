@@ -13,6 +13,8 @@ const BTN_R2 = 7;
 const BTN_L2 = 6;
 const BTN_SQUARE = 2;
 const BTN_OPTIONS = 9;
+const BTN_DPAD_UP = 12;
+const BTN_DPAD_DOWN = 13;
 const BTN_DPAD_LEFT = 14;
 const BTN_DPAD_RIGHT = 15;
 const STICK_DEADZONE = 0.12;
@@ -109,6 +111,16 @@ export class Input {
       if (edges.has(BTN_CROSS) || edges.has(BTN_OPTIONS)) return true;
     }
     return false;
+  }
+
+  // Menyvalg for AI: d-pad opp/ned (antall) og venstre/høyre (vanskelighet), på tvers av alle kontrollere.
+  menuNav() {
+    let dx = 0, dy = 0;
+    for (const edges of this.padEdges.values()) {
+      dy += (edges.has(BTN_DPAD_UP) ? 1 : 0) - (edges.has(BTN_DPAD_DOWN) ? 1 : 0);
+      dx += (edges.has(BTN_DPAD_RIGHT) ? 1 : 0) - (edges.has(BTN_DPAD_LEFT) ? 1 : 0);
+    }
+    return { dx, dy };
   }
 
   backPressed() {

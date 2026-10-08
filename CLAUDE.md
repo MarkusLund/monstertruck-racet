@@ -36,7 +36,7 @@ Bane, terreng, gjerder og mynter genereres fra `game.seed` med `mulberry(seed)`.
 1. **Vite-relay** (`server/relay.js`, Vite-plugin): «dum» videresending per rom. Én nettleser er vert (localhost, eller `?role=host`), kjører simuleringen i `main.js` (`simStep`, `hostMessage`) og sender øyeblikksbilder. Serveren har også `/api/info` (LAN- og tunneladresser).
 2. **Cloudflare** (`server/worker.js`): ett Durable Object (`GameRoom`) per rom kjører simuleringen selv. Alle nettlesere er klienter. Spillere identifiseres med en fast `pid` fra localStorage, så en ny innlasting gir tilbake samme truck.
 
-Klientsiden (`clientMessage`/`clientStep` i `main.js`) er den samme i begge modi. Meldingstypene (`hello`, `host`, `hostgone`, `peer`, `lobby`, `assign`, `full`, `snap`, `in`, `watch`, `start`, `restart`, `rtc`) må holdes i synk mellom `main.js`, `relay.js` og `worker.js` når protokollen endres.
+Klientsiden (`clientMessage`/`clientStep` i `main.js`) er den samme i begge modi. Meldingstypene (`hello`, `host`, `hostgone`, `peer`, `lobby`, `assign`, `full`, `snap`, `in`, `watch`, `start`, `restart`, `rtc`, `ai`) må holdes i synk mellom `main.js`, `relay.js` og `worker.js` når protokollen endres.
 
 `src/net.js`: WebSocket for lobby og signalering, pluss forsøk på direkte WebRTC-datakanal (uordnet, uten gjensending) for `snap` og `in`. Faller tilbake til WebSocket. Øyeblikksbilder har løpenummer `q`, og gamle bilder kastes.
 

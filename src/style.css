@@ -132,3 +132,5 @@ body.client .rocket-warn { font-size: 24px; top: 18%; }
 .vp.low .pos { top: auto; bottom: 12px; }
 .vp.low .card { top: auto; bottom: 12px; }
 .vp.low .fx { bottom: 80px; }
+.aiopts { margin: 12px 0 0; font-size: 13px; }
+.aiopts b { color: #ffd400; }

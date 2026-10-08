@@ -19,7 +19,7 @@ test.describe('Tilskuer', () => {
 
   test('en ?watch-skjerm tar ikke plass, og ser alle truckene med minikart og stilling', async ({ browser }) => {
     const room = `t-${Date.now()}-w`;
-    const host = await openPage(browser, `/?room=${room}&role=host&manual=1`, { width: 640, height: 400 });
+    const host = await openPage(browser, `/?room=${room}&role=host&manual=1&ai=0`, { width: 640, height: 400 });
     const player = await openPage(browser, `/?room=${room}&role=client&manual=1`, { width: 400, height: 260 });
     const tv = await openPage(browser, `/?room=${room}&role=client&manual=1&watch`, { width: 960, height: 600 });
     await wait(host, () => window.__game.host.peers.size === 2);
@@ -63,7 +63,7 @@ test.describe('Tilskuer', () => {
 
   test('en som kobler til midt i et løp ser på til neste løp', async ({ browser }) => {
     const room = `t-${Date.now()}-l`;
-    const host = await openPage(browser, `/?room=${room}&role=host&manual=1`, { width: 640, height: 400 });
+    const host = await openPage(browser, `/?room=${room}&role=host&manual=1&ai=0`, { width: 640, height: 400 });
     await host.keyboard.press('Enter');
     await host.evaluate(() => window.__game.advance(0.05));
     await host.evaluate(() => {

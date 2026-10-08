@@ -34,7 +34,9 @@ export async function open(page, { manual = true, seed = TEST_SEED, query = '' }
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }, seed);
-  await page.goto(query ? (manual ? `/?manual=1&${query}` : `/?${query}`) : manual ? '/?manual=1' : '/');
+  // AI-motstandere er av som standard i testene, så antall trucks er det testene forventer (?ai=N overstyrer).
+  const q = /(^|&)ai=/.test(query) ? query : `ai=0${query ? `&${query}` : ''}`;
+  await page.goto(manual ? `/?manual=1&${q}` : `/?${q}`);
   await page.waitForFunction(() => !!window.__game);
 }
 

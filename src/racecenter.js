@@ -71,7 +71,7 @@ export class RaceCenter {
     return { canvas: c, map };
   }
 
-  update(game, { badge = '' } = {}) {
+  update(game, { badge = '', name = (i) => `Spiller ${i + 1}` } = {}) {
     const { canvas, ctx } = this;
     const css = canvas.clientWidth;
     if (!css) return;
@@ -134,7 +134,7 @@ export class RaceCenter {
       let gap = i === 0 ? 'Leder' : laps ? `−${laps} ${laps === 1 ? 'runde' : 'runder'}` : `−${Math.round(behind)} m`;
       if (t.finished) gap = 'I mål';
       const prog = Math.round(game.progress(t) * 100);
-      return `<li class="c${t.id}"><b>${i + 1}</b><span class="nm">Spiller ${t.id + 1}</span><span class="gp">${gap}</span><i style="width:${prog}%"></i></li>`;
+      return `<li class="c${t.id}"><b>${i + 1}</b><span class="nm">${name(t.id)}</span><span class="gp">${gap}</span><i style="width:${prog}%"></i></li>`;
     }).join('');
     if (rows !== this.listKey) { this.listKey = rows; this.el.querySelector('#rc-list').innerHTML = rows; }
   }

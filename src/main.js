@@ -7,6 +7,7 @@ import { groundHeight } from './terrain.js';
 import { Net, lerpSnapshot } from './net.js';
 import { loadRecords, submitTime } from './records.js';
 import { RaceCenter } from './racecenter.js';
+import { createAI, LEVELS, LEVEL_LABELS } from './ai.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -65,7 +66,12 @@ function fmtTime(t) {
 }
 
 // ---------- Vert: kjører hele spillet, fjernspillere sender bare input ----------
-const host = { localCount: 2, peers: new Map(), slots: [], info: null, evBuf: [], step: 0 };
+// ?ai=N og ?lvl=N setter AI-valget fra adressen (standard: 1 motstander på nivå Middels).
+const aiParam = (key, max, fallback) => { const v = Number(params.get(key)); return params.has(key) && Number.isInteger(v) ? clamp(v, 0, max) : fallback; };
+const host = {
+  localCount: 2, peers: new Map(), slots: [], info: null, evBuf: [], step: 0,
+  ai: aiParam('ai', MAX_PLAYERS - 1, 1), lvl: aiParam('lvl', LEVELS.length - 1, 1), ais: [],
+};
 
 function lobbySlots() {
   const slots = [];
@@ -75,7 +81,19 @@ function lobbySlots() {
     if (p.watch) continue;
     slots.push({ kind: 'peer', id: p.id });
   }
+  // AI-motstandere fyller opp ledige plasser etter lokale og online spillere.
+  const bots = Math.min(host.ai, MAX_PLAYERS - slots.length);
+  for (let k = 0; k < bots; k++) slots.push({ kind: 'ai', k });
   return slots;
+}
+
+const countAi = (slots) => slots.filter((s) => s.kind === 'ai').length;
+
+// Endrer AI-valget (antall og nivå) i menyen og forteller klientene om det.
+function setAi(n, lvl) {
+  host.ai = ((Math.round(n) % MAX_PLAYERS) + MAX_PLAYERS) % MAX_PLAYERS;
+  host.lvl = ((Math.round(lvl) % LEVELS.length) + LEVELS.length) % LEVELS.length;
+  sendLobby();
 }
 
 function sendLobby() {
@@ -83,7 +101,7 @@ function sendLobby() {
   const slots = host.slots.length ? host.slots : lobbySlots();
   for (const p of host.peers.values()) {
     const you = slots.findIndex((s) => s.kind === 'peer' && s.id === p.id);
-    net.send({ t: 'lobby', to: p.id, you, n: slots.length, state: game.state });
+    net.send({ t: 'lobby', to: p.id, you, n: slots.length, state: game.state, ai: countAi(slots), lvl: host.lvl });
   }
 }
 
@@ -91,7 +109,9 @@ function startRace() {
   host.slots = lobbySlots();
   game.start(host.slots.length);
   host.evBuf = [];
-  host.slots.forEach((s, i) => { if (s.kind === 'peer') net?.send({ t: 'assign', to: s.id, slot: i }); });
+  host.ais = host.slots.map((s, i) => (s.kind === 'ai' ? createAI(game.seed, i, host.lvl) : null));
+  const ai = countAi(host.slots);
+  host.slots.forEach((s, i) => { if (s.kind === 'peer') net?.send({ t: 'assign', to: s.id, slot: i, ai }); });
   for (const p of host.peers.values()) {
     if (!p.watch && !host.slots.some((s) => s.kind === 'peer' && s.id === p.id)) net?.send({ t: 'full', to: p.id });
   }
@@ -108,10 +128,12 @@ function hostMessage(m) {
     if (m.open) host.peers.set(m.id, { id: m.id, input: IDLE });
     else host.peers.delete(m.id);
     if (game.state === 'menu') sendLobby();
-    else if (m.open) net.send({ t: 'lobby', to: m.id, you: -1, n: game.trucks.length, state: game.state });
+    else if (m.open) net.send({ t: 'lobby', to: m.id, you: -1, n: game.trucks.length, state: game.state, ai: countAi(host.slots), lvl: host.lvl });
   } else if (m.t === 'watch') {
     const p = host.peers.get(m.from);
     if (p) { p.watch = true; if (game.state === 'menu') sendLobby(); }
+  } else if (m.t === 'ai') {
+    if (game.state === 'menu' && Number.isFinite(m.n) && Number.isFinite(m.lvl)) setAi(m.n, m.lvl);
   } else if (m.t === 'in') {
     const p = host.peers.get(m.from);
     if (p && Number.isFinite(m.th) && Number.isFinite(m.st)) p.input = { throttle: clamp(m.th, 0, 1), steer: clamp(m.st, -1, 1), brake: clamp(+m.br || 0, 0, 1), jump: !!m.jp };
@@ -119,7 +141,7 @@ function hostMessage(m) {
 }
 
 // ---------- Klient: viser verten sitt spill fra egen truck ----------
-const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '', buf: [], rq: 0, gaps: [], dry: 0 };
+const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '', buf: [], rq: 0, gaps: [], dry: 0, ai: 0, lvl: 1 };
 
 function clientMessage(m) {
   if (m.t === 'hello') {
@@ -132,9 +154,11 @@ function clientMessage(m) {
   else if (m.t === 'hostgone') { client.status = 'nohost'; client.cur = client.prev = null; client.buf = []; }
   else if (m.t === 'lobby') {
     client.slot = m.you >= 0 ? m.you : null;
+    client.ai = m.ai || 0;
+    client.lvl = m.lvl ?? 1;
     client.status = m.state === 'menu' ? 'lobby' : 'spectate';
     if (m.state === 'menu') { client.cur = client.prev = null; client.buf = []; }
-  } else if (m.t === 'assign') { client.slot = m.slot; client.status = 'playing'; }
+  } else if (m.t === 'assign') { client.slot = m.slot; client.ai = m.ai || 0; client.status = 'playing'; }
   else if (m.t === 'full') client.status = 'full';
   else if (m.t === 'snap') {
     client.prev = client.cur || m.s;
@@ -180,6 +204,9 @@ function simStep() {
 
   if (game.state === 'menu') {
     if (input.pressed.has('KeyP')) { host.localCount = host.localCount === 2 ? 1 : 2; sendLobby(); }
+    const nav = input.menuNav();
+    const dn = (input.pressed.has('KeyN') ? 1 : 0) + nav.dy, dl = (input.pressed.has('KeyV') ? 1 : 0) + nav.dx;
+    if (dn || dl) setAi(host.ai + dn, host.lvl + dl);
     if (input.confirmPressed()) startRace();
   } else if (game.state === 'finished') {
     if (game.stateTime > 1.2 && input.confirmPressed()) startRace();
@@ -189,7 +216,9 @@ function simStep() {
   lastInputs = game.trucks.map((_, i) => {
     const s = host.slots[i];
     if (!s) return IDLE;
-    return s.kind === 'local' ? input.player(s.k) : (host.peers.get(s.id)?.input || IDLE);
+    if (s.kind === 'local') return input.player(s.k);
+    if (s.kind === 'ai') return game.state === 'racing' ? host.ais[i].input(game, i) : IDLE;
+    return host.peers.get(s.id)?.input || IDLE;
   });
   game.step(lastInputs);
   for (const e of game.events) {
@@ -228,6 +257,12 @@ function clientStep(now, dt) {
   if (input.pressed.size || input.padEdges.size) sound.unlock();
   // Spillserveren (server/worker.js) har ingen vert som kan trykke Enter, så en klient kan starte løpet selv.
   if (net && input.confirmPressed() && (client.status === 'lobby' || (client.status === 'playing' && game.state === 'finished'))) net.send({ t: 'start' });
+  // AI-valget gjelder for hele rommet: også en klient kan endre det i lobbyen (Cloudflare-modus har ingen vert).
+  if (net && !watch && client.status === 'lobby') {
+    const nav = input.menuNav();
+    const dn = (input.pressed.has('KeyN') ? 1 : 0) + nav.dy, dl = (input.pressed.has('KeyV') ? 1 : 0) + nav.dx;
+    if (dn || dl) net.send({ t: 'ai', n: client.ai + dn, lvl: client.lvl + dl });
+  }
   const inp = clientInput();
   lastInputs = [{ throttle: inp.th, steer: inp.st }];
   const key = `${inp.th.toFixed(2)}|${inp.st.toFixed(2)}|${inp.br.toFixed(2)}|${inp.jp ? 1 : 0}`;
@@ -252,6 +287,12 @@ function clientStep(now, dt) {
 }
 
 // ---------- HUD ----------
+// AI-trucks ligger sist, så de siste truckene er Bot 1, Bot 2 ...
+function truckName(i) {
+  const first = game.trucks.length - (role === 'host' ? countAi(host.slots) : client.ai);
+  return i >= first ? `Bot ${i - first + 1}` : `Spiller ${i + 1}`;
+}
+
 const viewsEl = $('views');
 const raceCenter = new RaceCenter($('racecenter'));
 let viewsKey = '';
@@ -265,7 +306,7 @@ function buildViews(views, center) {
     el.className = `vp vp${ti} c${ti}${center && views.length === 4 && r.y > 0 ? ' low' : ''}`;
     el.style.cssText = `left:${r.x * 100}%;top:${r.y * 100}%;width:${r.w * 100}%;height:${r.h * 100}%`;
     el.innerHTML = `<div class="pos" id="pos-${ti}"></div>
-      <div class="card"><div class="pname">Spiller ${ti + 1}</div>
+      <div class="card"><div class="pname">${truckName(ti)}</div>
         <div class="score"><span class="coin-icon"></span><span class="score-val" id="score-${ti}">0</span><span class="score-label">mynter</span></div>
         <div class="lap" id="lap-${ti}"></div></div>
       <div class="wrong" id="wrong-${ti}">Feil vei!</div><div class="rocket-warn" id="rw-${ti}"></div><div class="fx" id="fx-${ti}"></div>`;
@@ -295,19 +336,19 @@ function updateHud(views = currentViews()) {
   const playing = role === 'host' || spec || (client.status === 'playing' && !!client.cur);
   // Minikart og stilling midt på skjermen: alltid for tilskuere, og på vertens delte skjerm.
   const center = spec || (role === 'host' && views.length > 1);
-  const key = `${views.join()}|${game.trucks.length}|${role}|${center}`;
+  const key = `${views.join()}|${game.trucks.length}|${role}|${center}|${truckName(game.trucks.length - 1)}`;
   if (key !== viewsKey) { viewsKey = key; buildViews(views, center); }
   const rc = $('racecenter');
   const showCenter = center && (game.state === 'countdown' || game.state === 'racing');
   const rcCls = `n${views.length}${showCenter ? '' : ' hidden'}`;
   if (rc.className !== rcCls) rc.className = rcCls;
-  if (showCenter) raceCenter.update(game, { badge: spec ? (watch ? 'Tilskuer' : 'Tilskuer · du er med i neste løp') : '' });
+  if (showCenter) raceCenter.update(game, { badge: spec ? (watch ? 'Tilskuer' : 'Tilskuer · du er med i neste løp') : '', name: truckName });
 
   let status = '';
   if (game.state === 'menu') status = 'Klar?';
   else if (game.state === 'countdown') status = 'Gjør deg klar!';
   else if (game.state === 'racing') status = 'Løp!';
-  else status = `Spiller ${game.winner + 1} vant!`;
+  else status = `${truckName(game.winner)} vant!`;
   setText($('status'), status);
   setText($('timer'), `Tid: ${fmtTime(game.state === 'finished' ? game.finishTime : game.time)}`);
 
@@ -327,6 +368,8 @@ function updateHud(views = currentViews()) {
       ps.classList.toggle('on', !!pad);
     }
     $('ctl-p2').classList.toggle('off', host.localCount < 2);
+    setText($('ai-count'), `AI-motstandere: ${countAi(lobbySlots())}`);
+    setText($('ai-level'), `Vanskelighet: ${LEVEL_LABELS[host.lvl]}`);
     renderLobby();
   }
   if (role === 'client') renderClientPanel();
@@ -335,7 +378,7 @@ function updateHud(views = currentViews()) {
     const rk = `${game.winner}|${game.seed}`;
     if (lastKey !== rk) {
       lastKey = rk;
-      $('winner-text').textContent = `Spiller ${game.winner + 1} vant!`;
+      $('winner-text').textContent = `${truckName(game.winner)} vant!`;
       $('winner-text').style.color = COLORS[game.winner];
       $('winner-time').textContent = `Tid: ${fmtTime(game.finishTime)}`;
       const rec = submitTime(game.seed, game.finishTime);
@@ -347,7 +390,7 @@ function updateHud(views = currentViews()) {
       $('best-time').textContent = `Rekord: ${fmtTime(Math.min(rec.best ?? Infinity, game.finishTime))}`;
       updateBest();
       $('result-scores').innerHTML = game.order().map((t, i) =>
-        `<div class="rs c${t.id}"><div class="pl">${i + 1}. Spiller ${t.id + 1}</div><div class="big" id="res-score-${t.id}">${t.score}</div><div>mynter</div></div>`).join('');
+        `<div class="rs c${t.id}"><div class="pl">${i + 1}. ${truckName(t.id)}</div><div class="big" id="res-score-${t.id}">${t.score}</div><div>mynter</div></div>`).join('');
       $('again').innerHTML = spec ? 'Venter på neste løp …' : 'Trykk <kbd>Enter</kbd> eller <kbd>✕</kbd> for å kjøre igjen';
     }
   }
@@ -398,6 +441,7 @@ function renderLobby() {
   const cells = Array.from({ length: MAX_PLAYERS }, (_, i) => {
     const s = slots[i];
     if (!s) return `<div class="slot empty c${i}"><b>Spiller ${i + 1}</b><span>Ledig</span></div>`;
+    if (s.kind === 'ai') return `<div class="slot c${i}"><b>Bot ${s.k + 1} (${COLOR_NAMES[i]})</b><span>Datastyrt · ${LEVEL_LABELS[host.lvl]}</span></div>`;
     const label = s.kind === 'local' ? local(s.k) : `Fjernspiller #${s.id}`;
     return `<div class="slot c${i}"><b>Spiller ${i + 1} (${COLOR_NAMES[i]})</b><span>${label}</span></div>`;
   }).join('');
@@ -424,6 +468,8 @@ function renderClientPanel() {
     playing: 'Venter på data fra verten …',
   };
   setText($('client-status'), msgs[client.status] || '');
+  const aiOpts = $('client-ai');
+  setText(aiOpts, client.status === 'lobby' && !watch ? `AI-motstandere: ${client.ai} · Vanskelighet: ${LEVEL_LABELS[client.lvl]} (N / V)` : '');
   const you = $('client-you');
   if (client.slot !== null) {
     setText(you, `Du er spiller ${client.slot + 1} (${COLOR_NAMES[client.slot]})`);
@@ -481,7 +527,7 @@ updateHud();
 
 // Hooks for automated tests.
 window.__game = {
-  game, input, renderer, role, host, client,
+  game, input, renderer, role, host, client, setAi,
   // Som advance, men uten å tegne mellom hvert steg (raskt nok for lange simuleringer).
   simulate(seconds) {
     const n = Math.round(seconds / DT);
@@ -516,7 +562,7 @@ window.__game = {
       padList: game.track.pads,
       pads: [input.padInfo(0), input.padInfo(1)],
       triangles: renderer.renderer.info.render.triangles,
-      net: { role, peers: host.peers.size, slots: host.slots.length, direct: net ? net.direct : 0, clientStatus: client.status, clientSlot: client.slot, seed: game.seed },
+      net: { role, ai: host.ai, lvl: host.lvl, aiSlots: countAi(host.slots), clientAi: client.ai, peers: host.peers.size, slots: host.slots.length, direct: net ? net.direct : 0, clientStatus: client.status, clientSlot: client.slot, seed: game.seed },
     };
   },
   // Flytter en truck til avstand s langs banen (og sideforskyvning lat). `lap` = antall fullførte runder.
