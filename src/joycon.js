@@ -13,8 +13,8 @@ const SHOULDER = B.l | B.zl | B.r | B.zr;
 // Standard Gamepad-indekser som input.js leser.
 const BTN_SQUARE = 2, BTN_L2 = 6, BTN_R2 = 7, BTN_OPTIONS = 9, BTN_COUNT = 17;
 
-// Enkelt Joy-Con holdt sidelengs: stikken styrer. SR eller knappen til høyre gir gass, SL eller
-// knappen nedenfor gir brems/rygg, knappene oppe og til venstre (eller L/ZL/R/ZR) hopper. Venstre
+// Enkelt Joy-Con holdt sidelengs (som Mario Kart): stikken styrer. Knappen til høyre gir gass, SL eller
+// knappen nedenfor gir brems/rygg, SR, knappene oppe og til venstre (eller L/ZL/R/ZR) hopper. Venstre
 // Joy-Con er rotert 90° mot klokka (stikkens «opp» peker mot venstre) og høyre med klokka, så de
 // fysiske knappene svarer til ulike biter. ?jcflip=1 snur alt 180° (andre veien rundt).
 const FACE_DIRS = {
@@ -34,13 +34,14 @@ export function toPad(slot, st, name = '') {
   const id = `${name || 'Switch 2'} (UDP-bro, Vendor: 057e)`;
   if (side) {
     const flip = flipped();
-    const gas = side === 'L' ? B.srL : B.srR;
-    const brake = side === 'L' ? B.slL : B.slR;
+    const sr = side === 'L' ? B.srL : B.srR;
+    const sl = side === 'L' ? B.slL : B.slR;
     const f = FACE_DIRS[side];
     const [fRight, fDown, fUp, fLeft] = flip ? [f.left, f.up, f.down, f.right] : [f.right, f.down, f.up, f.left];
-    buttons[BTN_R2] = press(has((flip ? brake : gas) | fRight));
-    buttons[BTN_L2] = press(has((flip ? gas : brake) | fDown));
-    buttons[BTN_SQUARE] = press(has(fUp | fLeft | SHOULDER));
+    // Som i Mario Kart: høyre skulderknapp (SR) hopper, knappen til høyre gasser.
+    buttons[BTN_R2] = press(has(fRight));
+    buttons[BTN_L2] = press(has((flip ? sr : sl) | fDown));
+    buttons[BTN_SQUARE] = press(has((flip ? sl : sr) | fUp | fLeft | SHOULDER));
     buttons[BTN_OPTIONS] = press(has(B.plus | B.minus));
     axes[0] = (side === 'L' ? -1 : 1) * (flip ? -1 : 1) * st.ly;
   } else {

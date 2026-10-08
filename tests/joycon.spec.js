@@ -18,13 +18,13 @@ test.describe('Joy-Con 2 via UDP-broen', () => {
     expect(parsePacket(Buffer.from('tull'))).toBeNull();
   });
 
-  test('enkelt Joy-Con holdt sidelengs: SR gasser, SL bremser, knapp hopper, stikken styrer', async ({ page }) => {
+  test('enkelt Joy-Con holdt sidelengs: SR hopper, SL bremser, knappen til høyre gasser, stikken styrer', async ({ page }) => {
     await open(page);
     const r = await page.evaluate(async (BIT) => {
       const { toPad } = await import('/src/joycon.js');
       const pad = (slot, name, b, ly = 0) => toPad(slot, { b, lx: 0, ly }, name);
       const btn = (p, i) => p.buttons[i].pressed;
-      const L = pad(0, 'Joy-Con 2 (L)', BIT.srL | BIT.dpadRight, 0.8);
+      const L = pad(0, 'Joy-Con 2 (L)', BIT.srL, 0.8);
       const R = pad(1, 'Joy-Con 2 (R)', BIT.slR | BIT.plus, 0.8);
       return {
         lGass: btn(L, 7), lBrems: btn(L, 6), lHopp: btn(L, 2), lStyr: L.axes[0],
@@ -32,7 +32,7 @@ test.describe('Joy-Con 2 via UDP-broen', () => {
         mapping: L.mapping, index: L.index,
       };
     }, BIT);
-    expect(r).toMatchObject({ lGass: true, lBrems: false, lHopp: true, rGass: false, rBrems: true, rBekreft: true });
+    expect(r).toMatchObject({ lGass: false, lBrems: false, lHopp: true, rGass: false, rBrems: true, rBekreft: true });
     expect(r.lStyr).toBeCloseTo(-0.8); // verifisert på ekte venstre Joy-Con (første forsøk styrte feil vei)
     expect(r.rStyr).toBeCloseTo(0.8); // høyre Joy-Con er rotert motsatt vei (ikke verifisert på maskinvare)
     expect(r.mapping).toBe('standard');
@@ -67,7 +67,7 @@ test.describe('Joy-Con 2 via UDP-broen', () => {
       const { toPad } = await import('/src/joycon.js');
       const names = ['Joy-Con 2 (L)', 'Joy-Con 2 (R)', 'Joy-Con 2 (R)', 'Joy-Con 2 (L)'];
       window.__jc = { b: [0, 0, 0, 0] };
-      const SR = { 'Joy-Con 2 (L)': 0x100000, 'Joy-Con 2 (R)': 0x10 };
+      const SR = { 'Joy-Con 2 (L)': 0x10000, 'Joy-Con 2 (R)': 0x2 }; // knappen til høyre (gass)
       window.__setBridge = () => {
         window.__game.input.bridge = {
           pads: () => names.map((n, i) => toPad(i, { b: window.__jc.b[i] ? SR[n] : 0, lx: 0, ly: 0 }, n)),
