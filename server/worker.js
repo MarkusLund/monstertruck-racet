@@ -55,13 +55,14 @@ export class GameRoom extends DurableObject {
       o.key = `#${oid}`;
       if (this.game.state !== 'menu') this.send(o.ws, { t: 'lobby', you: -1, n: this.game.trucks.length, state: this.game.state, ai: this.slotAi(), lvl: this.lvl });
     }
-    this.peers.set(id, { ws, input: IDLE, key });
+    this.peers.set(id, { ws, input: IDLE, key, ready: false });
     clearTimeout(this.emptyTimer);
     this.emptyTimer = null;
     this.send(ws, { t: 'hello', id, host: true });
     if (this.game.state === 'menu') this.sendLobby();
     else {
-      const slot = this.slots.indexOf(key);
+      let slot = this.slots.indexOf(key);
+      if (slot < 0 && pid) slot = this.takeOverAi(key); // uten pid kan det være en tilskuerskjerm
       this.send(ws, { t: 'lobby', you: slot, n: this.game.trucks.length, state: this.game.state, ai: this.slotAi(), lvl: this.lvl });
       if (slot >= 0) this.send(ws, { t: 'assign', slot, ai: this.slotAi() });
     }
@@ -74,7 +75,10 @@ export class GameRoom extends DurableObject {
 
   leave(id) {
     if (!this.peers.delete(id)) return;
-    if (this.peers.size) { if (this.game.state === 'menu') this.sendLobby(); return; }
+    if (this.peers.size) {
+      if (this.game.state === 'menu') { this.sendLobby(); this.startIfReady(); }
+      return;
+    }
     // Tomt rom: sett løpet på pause, og nullstill først hvis ingen kommer tilbake.
     this.stopLoop();
     this.emptyTimer = setTimeout(() => { this.emptyTimer = null; this.slots = []; this.game.toMenu(); }, EMPTY_GRACE);
@@ -96,6 +100,11 @@ export class GameRoom extends DurableObject {
         this.lvl = ((Math.round(m.lvl) % LEVELS.length) + LEVELS.length) % LEVELS.length;
         this.sendLobby();
       }
+    } else if (m.t === 'ready') {
+      // Lobbyen: hver spiller markerer seg klar (veksler). Løpet starter når alle spillere er klare.
+      if (this.game.state === 'menu' && !p.watch) { p.ready = !p.ready; this.sendLobby(); this.startIfReady(); }
+    } else if (m.t === 'go') {
+      if (this.game.state === 'menu' && !p.watch) this.startRace(); // «start nå»: starter selv om ikke alle er klare
     } else if (m.t === 'start') {
       const g = this.game;
       if (g.state === 'menu' || (g.state === 'finished' && g.stateTime > 1.2)) this.startRace();
@@ -109,18 +118,39 @@ export class GameRoom extends DurableObject {
   // AI-motstandere fyller opp ledige plasser etter spillerne.
   botCount() { return Math.min(this.ai, MAX_PLAYERS - this.players().length); }
 
+  startIfReady() {
+    const ps = this.playerPeers();
+    if (ps.length && ps.every((p) => p.ready)) this.startRace();
+  }
+
+  playerPeers() { return [...this.peers.values()].filter((p) => !p.watch).slice(0, MAX_PLAYERS); }
+
+  // Sen innkomling (pid kjent, ingen plass i løpet): overta siste AI-truck. Gir -1 når det ikke finnes noen.
+  takeOverAi(key) {
+    const i = this.slots.lastIndexOf(AI_KEY);
+    if (i < 0) return -1;
+    this.slots[i] = key;
+    this.ais[i] = null;
+    const ai = this.slotAi();
+    // De andre spillerne må få vite det nye AI-antallet (brukes til navnene Bot/Spiller).
+    this.slots.forEach((k, j) => { const p = k === AI_KEY || k === key ? null : this.peerByKey(k); if (p) this.send(p.ws, { t: 'assign', slot: j, ai }); });
+    return i;
+  }
+
   slotAi() { return this.slots.filter((k) => k === AI_KEY).length; }
 
   peerByKey(key) { for (const p of this.peers.values()) if (p.key === key) return p; return null; }
 
   sendLobby() {
     const keys = this.players();
-    for (const p of this.peers.values()) this.send(p.ws, { t: 'lobby', you: keys.indexOf(p.key), n: keys.length + this.botCount(), state: this.game.state, ai: this.botCount(), lvl: this.lvl });
+    const rdy = this.playerPeers().map((p) => (p.ready ? 1 : 0)); // klar-status per spiller, i samme rekkefølge som `you`
+    for (const p of this.peers.values()) this.send(p.ws, { t: 'lobby', you: keys.indexOf(p.key), n: keys.length + this.botCount(), state: this.game.state, ai: this.botCount(), lvl: this.lvl, rdy });
   }
 
   startRace() {
     const players = this.players();
     if (!players.length) return; // bare tilskuere i rommet
+    for (const p of this.peers.values()) p.ready = false;
     this.slots = [...players, ...Array(this.botCount()).fill(AI_KEY)];
     this.game.start(this.slots.length);
     this.ais = this.slots.map((key, i) => (key === AI_KEY ? createAI(this.game.seed, i, this.lvl) : null));

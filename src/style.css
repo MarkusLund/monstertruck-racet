@@ -134,3 +134,11 @@ body.client .rocket-warn { font-size: 24px; top: 18%; }
 .vp.low .fx { bottom: 80px; }
 .aiopts { margin: 12px 0 0; font-size: 13px; }
 .aiopts b { color: #ffd400; }
+.roomlink { margin: 12px 0 0; font-size: 13px; }
+.roomlink b { color: #ffd400; user-select: all; }
+.players { list-style: none; margin: 10px 0 0; padding: 0; font-size: 15px; font-weight: 700; }
+.players li { display: flex; justify-content: space-between; gap: 24px; padding: 2px 0; color: var(--c); }
+.players li.me { text-decoration: underline; }
+.players .ready { color: #5f5; }
+.players .waiting { color: #aaa; }
+.roomlink.hidden, .players.hidden, .tips.hidden { display: none; }

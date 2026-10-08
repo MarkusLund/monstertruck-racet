@@ -141,7 +141,7 @@ function hostMessage(m) {
 }
 
 // ---------- Klient: viser verten sitt spill fra egen truck ----------
-const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '', buf: [], rq: 0, gaps: [], dry: 0, ai: 0, lvl: 1 };
+const client = { status: 'connecting', id: null, slot: null, prev: null, cur: null, curTime: 0, sentAt: 0, sent: '', buf: [], rq: 0, gaps: [], dry: 0, ai: 0, lvl: 1, rdy: null };
 
 function clientMessage(m) {
   if (m.t === 'hello') {
@@ -156,6 +156,7 @@ function clientMessage(m) {
     client.slot = m.you >= 0 ? m.you : null;
     client.ai = m.ai || 0;
     client.lvl = m.lvl ?? 1;
+    client.rdy = m.rdy || null; // bare Cloudflare-serveren sender klar-status; relayen gjør ikke det
     client.status = m.state === 'menu' ? 'lobby' : 'spectate';
     if (m.state === 'menu') { client.cur = client.prev = null; client.buf = []; }
   } else if (m.t === 'assign') { client.slot = m.slot; client.ai = m.ai || 0; client.status = 'playing'; }
@@ -256,7 +257,11 @@ function clientStep(now, dt) {
   input.poll();
   if (input.pressed.size || input.padEdges.size) sound.unlock();
   // Spillserveren (server/worker.js) har ingen vert som kan trykke Enter, så en klient kan starte løpet selv.
-  if (net && input.confirmPressed() && (client.status === 'lobby' || (client.status === 'playing' && game.state === 'finished'))) net.send({ t: 'start' });
+  if (net && input.confirmPressed()) {
+    if (client.status === 'lobby' && client.rdy) { if (!watch) net.send({ t: 'ready' }); } // Cloudflare: klar-markering (veksler)
+    else if (client.status === 'lobby' || (client.status === 'playing' && game.state === 'finished')) net.send({ t: 'start' });
+  }
+  if (net && !watch && client.status === 'lobby' && client.rdy && input.pressed.has('KeyS')) net.send({ t: 'go' }); // start nå
   // AI-valget gjelder for hele rommet: også en klient kan endre det i lobbyen (Cloudflare-modus har ingen vert).
   if (net && !watch && client.status === 'lobby') {
     const nav = input.menuNav();
@@ -462,7 +467,7 @@ function renderClientPanel() {
   const msgs = {
     connecting: 'Kobler til …',
     nohost: 'Venter på at verten åpner spillet …',
-    lobby: watch ? 'Tilskuerskjerm. Løpet vises her når det starter.' : 'Koblet til! Trykk Enter (eller ✕) for å starte løpet.',
+    lobby: watch ? 'Tilskuerskjerm. Løpet vises her når det starter.' : client.rdy ? 'Koblet til! Løpet starter når alle spillerne er klare.' : 'Koblet til! Trykk Enter (eller ✕) for å starte løpet.',
     spectate: watch ? 'Tilskuerskjerm. Et løp pågår, venter på bilder fra verten …' : 'Et løp pågår. Du blir med i neste løp.',
     full: 'Løpet er fullt (maks 4 spillere). Du blir med i neste løp hvis det er plass.',
     playing: 'Venter på data fra verten …',
@@ -470,6 +475,18 @@ function renderClientPanel() {
   setText($('client-status'), msgs[client.status] || '');
   const aiOpts = $('client-ai');
   setText(aiOpts, client.status === 'lobby' && !watch ? `AI-motstandere: ${client.ai} · Vanskelighet: ${LEVEL_LABELS[client.lvl]} (N / V)` : '');
+  const cloud = client.status === 'lobby' && !watch && !!client.rdy;
+  const roomEl = $('client-room');
+  roomEl.classList.toggle('hidden', !cloud);
+  if (cloud) setText($('client-roomlink'), `${location.origin}/?room=${encodeURIComponent(room)}`);
+  const list = $('client-players');
+  list.classList.toggle('hidden', !cloud);
+  if (cloud) {
+    const html = client.rdy.map((r, i) => `<li class="c${i}${i === client.slot ? ' me' : ''}">Spiller ${i + 1}${i === client.slot ? ' (deg)' : ''}<span class="${r ? 'ready' : 'waiting'}">${r ? 'klar' : 'venter'}</span></li>`).join('');
+    if (list.dataset.html !== html) { list.dataset.html = html; list.innerHTML = html; }
+  }
+  const help = $('client-help');
+  help.classList.toggle('hidden', !cloud);
   const you = $('client-you');
   if (client.slot !== null) {
     setText(you, `Du er spiller ${client.slot + 1} (${COLOR_NAMES[client.slot]})`);

@@ -36,9 +36,11 @@ Bane, terreng, gjerder og mynter genereres fra `game.seed` med `mulberry(seed)`.
 1. **Vite-relay** (`server/relay.js`, Vite-plugin): «dum» videresending per rom. Én nettleser er vert (localhost, eller `?role=host`), kjører simuleringen i `main.js` (`simStep`, `hostMessage`) og sender øyeblikksbilder. Serveren har også `/api/info` (LAN- og tunneladresser).
 2. **Cloudflare** (`server/worker.js`): ett Durable Object (`GameRoom`) per rom kjører simuleringen selv. Alle nettlesere er klienter. Spillere identifiseres med en fast `pid` fra localStorage, så en ny innlasting gir tilbake samme truck.
 
-Klientsiden (`clientMessage`/`clientStep` i `main.js`) er den samme i begge modi. Meldingstypene (`hello`, `host`, `hostgone`, `peer`, `lobby`, `assign`, `full`, `snap`, `in`, `watch`, `start`, `restart`, `rtc`, `ai`) må holdes i synk mellom `main.js`, `relay.js` og `worker.js` når protokollen endres.
+Klientsiden (`clientMessage`/`clientStep` i `main.js`) er den samme i begge modi. Meldingstypene (`hello`, `host`, `hostgone`, `peer`, `lobby`, `assign`, `full`, `snap`, `in`, `watch`, `start`, `restart`, `rtc`, `ai`, `ready`, `go`) må holdes i synk mellom `main.js`, `relay.js` og `worker.js` når protokollen endres.
 
 `src/net.js`: WebSocket for lobby og signalering, pluss forsøk på direkte WebRTC-datakanal (uordnet, uten gjensending) for `snap` og `in`. Faller tilbake til WebSocket. Øyeblikksbilder har løpenummer `q`, og gamle bilder kastes.
+
+Cloudflare-lobbyen (kun `worker.js`; relayen/verten støtter den ikke, og klienten faller tilbake til gammel `start`-oppførsel når `lobby` mangler `rdy`): `ready` (klient → server) veksler spillerens klar-markering (Enter/kontroller-bekreft), og løpet starter når alle ikke-tilskuere er klare (alene: umiddelbart). `go` («start nå», tasten `S`) tvinger start. `lobby` har feltet `rdy` (0/1 per spiller, samme rekkefølge som `you`). `start` brukes fortsatt for «finished → nytt løp». En spiller med `pid` som kobler til mens et løp pågår overtar siste AI-truck (`assign` + `lobby`); finnes ingen, ser hen på som før.
 
 ### Øyeblikksbilder
 30 per sekund (hvert andre steg). `Game.snapshot()`/`applySnapshot()` i `game.js` serialiserer kompakt. Truck-felt som klienter trenger må stå i `TRUCK_FIELDS`. `lerpSnapshot` (net.js) interpolerer feltene i `SMOOTH`. Klienten spiller av fra en jitterbuffer der forsinkelsen tilpasses p95 av gapene mellom bildene (`updateSnapDelay` i main.js).
