@@ -391,8 +391,9 @@ function updateHud(views = currentViews()) {
     for (let i = 0; i < PAD_SLOTS; i++) {
       const pad = input.padInfo(i);
       const ps = $(`pad-status-${i}`);
-      setText(ps, pad ? `✓ ${pad.name} tilkoblet` : i < 2 ? 'Ingen kontroller – trykk en knapp på kontrolleren for å koble til' : 'Ingen kontroller');
+      setText(ps, pad ? `✓ ${pad.name} tilkoblet` : i >= 2 ? '' : 'Tastatur (eller trykk en knapp på en kontroller)');
       ps.classList.toggle('on', !!pad);
+      if (i >= 2) ps.classList.toggle('hidden', !pad);
     }
     $('ctl-p2').classList.toggle('off', host.localCount < 2);
     setText($('ai-count'), `AI-motstandere: ${countAi(lobbySlots())}`);

@@ -38,7 +38,7 @@ h1 { margin: 0 0 6px; font-size: 52px; font-weight: 900; letter-spacing: 2px; co
 h1 span { color: #fff; text-shadow: 0 4px 0 #555; }
 .tagline { margin: 0 0 14px; font-size: 18px; opacity: .9; }
 .controls { display: flex; gap: 24px; justify-content: center; }
-.ctl { background: #131722; border-radius: 12px; padding: 12px 22px; min-width: 300px; }
+.ctl { background: #131722; border-radius: 12px; padding: 12px 22px; min-width: 300px; max-width: 360px; }
 .ctl.off { opacity: .35; }
 .ctl h2 { margin: 0 0 4px; font-size: 22px; text-transform: uppercase; color: var(--c); }
 .ctl.p1 { --c: var(--c0); } .ctl.p2 { --c: var(--c1); }
@@ -148,3 +148,6 @@ body.client .rocket-warn { font-size: 24px; top: 18%; }
 
 .extrapads { display: flex; gap: 24px; justify-content: center; margin-top: 8px; }
 .extrapads .pad-status { margin-bottom: 2px; }
+.extrapads:not(:has(.on)) { display: none; }
+.extrapads .pad-status.hidden { display: none; }
+.panel .aiopts { margin: 12px 0 0; font-size: 14px; }
