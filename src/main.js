@@ -1,6 +1,7 @@
 import { Game, DT, LAPS, MAX_PLAYERS, BARRICADE_HALF_WIDTH } from './game.js';
 import { Input, PAD_SLOTS } from './input.js';
 import { JoyconBridge } from './joycon.js';
+import { rumbleFor } from './rumble.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
 import { driftTier } from './truck.js';
@@ -183,7 +184,22 @@ function clientMessage(m) {
     for (const e of m.s.ev || []) {
       sound.event(e); // lyden plasseres etter avstand og retning fra vår egen truck
       renderer.fx.onEvent(e, game);
+      feel(e);
     }
+  }
+}
+
+// Vibrasjon på kontrollerne til de lokale spillerne som er involvert i hendelsen.
+function feel(e) {
+  for (const r of rumbleFor(e)) {
+    let ks;
+    if (role === 'host') {
+      const own = (i) => (host.slots[i]?.kind === 'local' ? [host.slots[i].k] : []);
+      ks = r.truck == null ? host.slots.flatMap((_, i) => own(i)) : own(r.truck);
+    } else {
+      ks = r.truck == null || r.truck === client.slot ? [0, 1] : [];
+    }
+    for (const k of ks) input.rumble(k, r.strong, r.weak, r.ms);
   }
 }
 
@@ -230,6 +246,7 @@ function simStep() {
   for (const e of game.events) {
     sound.event(e);
     renderer.fx.onEvent(e, game);
+    feel(e);
   }
   if (host.peers.size) host.evBuf.push(...game.events);
   game.events.length = 0;

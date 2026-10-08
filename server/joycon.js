@@ -23,15 +23,32 @@ export function parsePacket(buf) {
   return null;
 }
 
+// Rumble til appen: "S2R1" + u8 sterk + u8 svak. Appen stopper selv etter 0,5 s uten ny pakke.
+export function rumblePacket(strong, weak) {
+  const byte = (v) => Math.max(0, Math.min(255, Math.round(Number(v) || 0)));
+  return Buffer.from([0x53, 0x32, 0x52, 0x31, byte(strong), byte(weak)]);
+}
+
 export function attachJoycons(httpServer) {
   const wss = new WebSocketServer({ noServer: true });
   const names = Array(SLOTS).fill('');
+  const sockets = [];
+  const timers = [];
+  // Sender til appen på porten til plass s. Feil (appen kjører ikke, socketen er lukket) ignoreres.
+  const send = (sock, data, s) => { try { sock.send(data, BASE_PORT + s, '127.0.0.1', () => {}); } catch { /* socketen er lukket */ } };
   httpServer.on('upgrade', (req, socket, head) => {
     if (new URL(req.url, 'http://x').pathname !== '/joycon') return;
     // Kontrollerne sitter på denne maskinen; fjernspillere skal ikke få dem.
     if (!LOOPBACK.has(req.socket.remoteAddress)) { socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, (ws) => {
       names.forEach((n, s) => { if (n) ws.send(JSON.stringify({ t: 'n', s, n })); });
+      ws.on('message', (data) => {
+        let m;
+        try { m = JSON.parse(data.toString()); } catch { return; }
+        if (m.t === 'r' && Number.isInteger(m.s) && m.s >= 0 && m.s < SLOTS) {
+          send(sockets[m.s], rumblePacket(m.a, m.w), m.s);
+        }
+      });
     });
   });
   const broadcast = (msg) => {
@@ -39,7 +56,6 @@ export function attachJoycons(httpServer) {
     for (const ws of wss.clients) if (ws.readyState === 1) ws.send(text);
   };
 
-  const sockets = [];
   for (let s = 0; s < SLOTS; s++) {
     const sock = dgram.createSocket('udp4');
     sock.on('error', () => { /* appen kjører ikke (ICMP-avvisning); vi prøver igjen ved neste abonnering */ });
@@ -49,11 +65,17 @@ export function attachJoycons(httpServer) {
       if (m.t === 'n') names[s] = m.n;
       broadcast({ ...m, s });
     });
-    const subscribe = () => sock.send('hi', BASE_PORT + s, '127.0.0.1', () => {});
+    const subscribe = () => send(sock, 'hi', s);
     subscribe();
     const timer = setInterval(subscribe, RESUBSCRIBE_MS);
     timer.unref();
+    timers.push(timer);
     sockets.push(sock);
   }
-  httpServer.once('close', () => { for (const s of sockets) s.close(); wss.close(); });
+  // Vite starter serveren på nytt når filer endres: da må timerne stoppes og socketene lukkes.
+  httpServer.once('close', () => {
+    for (const t of timers) clearInterval(t);
+    for (const sock of sockets) { try { sock.close(); } catch { /* allerede lukket */ } }
+    wss.close();
+  });
 }

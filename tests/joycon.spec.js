@@ -71,6 +71,7 @@ test.describe('Joy-Con 2 via UDP-broen', () => {
       window.__setBridge = () => {
         window.__game.input.bridge = {
           pads: () => names.map((n, i) => toPad(i, { b: window.__jc.b[i] ? SR[n] : 0, lx: 0, ly: 0 }, n)),
+          rumble() {},
         };
       };
     });

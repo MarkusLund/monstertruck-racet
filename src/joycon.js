@@ -69,6 +69,7 @@ export class JoyconBridge {
     try {
       ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/joycon`);
     } catch { return; }
+    this.ws = ws;
     ws.onopen = () => { this.tries = 0; };
     ws.onmessage = (e) => {
       let m;
@@ -81,6 +82,11 @@ export class JoyconBridge {
       this.slots = [];
       setTimeout(() => this.open(), RECONNECT_MS[Math.min(this.tries++, RECONNECT_MS.length - 1)]);
     };
+  }
+
+  // Vibrasjon til Joy-Con på plass slot (0–3). Verdiene er 0–1; appen stopper selv etter 0,5 s.
+  rumble(slot, strong, weak) {
+    if (this.ws?.readyState === 1) this.ws.send(JSON.stringify({ t: 'r', s: slot, a: Math.round(strong * 255), w: Math.round(weak * 255) }));
   }
 
   // Appen sender bare tilstand når noe endres og gir ikke beskjed når en kontroller forsvinner,

@@ -25,6 +25,7 @@ const BTN_DPAD_LEFT = 14;
 const BTN_DPAD_RIGHT = 15;
 const STICK_DEADZONE = 0.12;
 export const PAD_SLOTS = 4;
+const BRIDGE_PAD_INDEX = 100; // Gamepad-indeks for Joy-Con via UDP-broen (src/joycon.js)
 const NO_KEYS = { accel: [], back: [], jump: [], left: [], right: [] }; // spiller 3 og 4 har bare kontroller
 
 // Nintendo Switch 2 (Pro Controller 2, Joy-Con 2, GameCube) via switch2mac eller annen Bluetooth-bro.
@@ -57,6 +58,7 @@ export class Input {
     this.prevPadButtons = new Map(); // gamepad index -> boolean[]
     this.padEdges = new Map(); // gamepad index -> Set(button) newly pressed this poll
     this.pads = Array(PAD_SLOTS).fill(null);
+    this.rumbles = []; // per spiller: { strong, weak, until, sent, on } i performance.now()-tid
     this.bridge = null; // JoyconBridge (UDP-bro) når switch2mac ikke kan lage virtuelle gamepader
 
     target.addEventListener('keydown', (e) => {
@@ -123,6 +125,44 @@ export class Input {
       if (!present.has(idx)) this.prevPadButtons.delete(idx);
     }
     this.pads = this.padSlots.map((i) => (i === null ? null : byIndex.get(i) || null));
+    this.refreshRumble();
+  }
+
+  // Vibrasjon til spiller k. Vanlige kontrollere får den som én effekt (vibrationActuator); Joy-Con
+  // via broen, som må oppdateres jevnlig fordi appen stopper rumble av seg selv etter 0,5 s.
+  rumble(k, strong, weak, ms) {
+    const pad = this.pads[k];
+    if (!pad) return;
+    const now = performance.now();
+    const r = (this.rumbles[k] ||= { strong: 0, weak: 0, until: 0, sent: 0, on: false });
+    if (now >= r.until) { r.strong = 0; r.weak = 0; }
+    r.strong = Math.max(r.strong, strong);
+    r.weak = Math.max(r.weak, weak);
+    r.until = Math.max(r.until, now + ms);
+    r.sent = 0;
+    if (pad.index < BRIDGE_PAD_INDEX) {
+      try {
+        pad.vibrationActuator?.playEffect('dual-rumble', {
+          startDelay: 0, duration: ms, strongMagnitude: strong, weakMagnitude: weak,
+        })?.catch?.(() => {});
+      } catch { /* kontrolleren støtter ikke vibrasjon */ }
+    }
+  }
+
+  refreshRumble() {
+    if (!this.bridge) return;
+    const now = performance.now();
+    this.rumbles.forEach((r, k) => {
+      const pad = this.pads[k];
+      if (!r || !pad || pad.index < BRIDGE_PAD_INDEX) return;
+      const slot = pad.index - BRIDGE_PAD_INDEX;
+      if (now < r.until) {
+        if (now - r.sent >= 150) { this.bridge.rumble(slot, r.strong, r.weak); r.sent = now; r.on = true; }
+      } else if (r.on) {
+        this.bridge.rumble(slot, 0, 0);
+        r.on = false; r.strong = 0; r.weak = 0;
+      }
+    });
   }
 
   padButton(pad, i) {
