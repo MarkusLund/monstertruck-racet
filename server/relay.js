@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { WebSocketServer } from 'ws';
+import { attachJoycons } from './joycon.js';
 
 // Enkel relay for flerspiller: verten (en nettleserfane på denne maskinen) kjører hele spillet.
 // Fjernspillere sender input hit, og relayen videresender det til verten. Verten sender øyeblikksbilder
@@ -90,6 +91,7 @@ export function relayPlugin() {
     name: 'monstertruck-relay',
     configureServer(server) {
       attach(server.httpServer, server.middlewares);
+      attachJoycons(server.httpServer);
       // Skrives etter at Vite har printet sine adresser.
       server.httpServer?.once('listening', () => setTimeout(() => {
         const port = server.httpServer.address()?.port;

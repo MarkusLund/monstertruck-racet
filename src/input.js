@@ -57,6 +57,7 @@ export class Input {
     this.prevPadButtons = new Map(); // gamepad index -> boolean[]
     this.padEdges = new Map(); // gamepad index -> Set(button) newly pressed this poll
     this.pads = Array(PAD_SLOTS).fill(null);
+    this.bridge = null; // JoyconBridge (UDP-bro) når switch2mac ikke kan lage virtuelle gamepader
 
     target.addEventListener('keydown', (e) => {
       if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
@@ -83,9 +84,10 @@ export class Input {
     this.pressed = this.pressedQueue;
     this.pressedQueue = new Set();
 
-    const list = (navigator.getGamepads ? Array.from(navigator.getGamepads()) : []).filter(
-      (p) => p && p.connected !== false,
-    );
+    const list = [
+      ...(navigator.getGamepads ? Array.from(navigator.getGamepads()) : []),
+      ...(this.bridge ? this.bridge.pads() : []),
+    ].filter((p) => p && p.connected !== false);
     const present = new Set(list.map((p) => p.index));
     // Drop disconnected controllers from their slot.
     for (let s = 0; s < PAD_SLOTS; s++) {
@@ -180,6 +182,7 @@ export class Input {
     const pad = this.pads[i];
     if (!pad) return null;
     const id = pad.id || '';
+    if (/joy-?con/i.test(id)) return { name: 'Joy-Con', index: pad.index };
     if (isSwitchPad(pad)) return { name: 'Switch 2', index: pad.index };
     const name = /dualsense|0ce6|0df2/i.test(id) ? 'DualSense' : /054c/i.test(id) ? 'PlayStation' : 'Kontroller';
     return { name, index: pad.index };

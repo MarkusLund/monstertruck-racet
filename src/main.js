@@ -1,5 +1,6 @@
 import { Game, DT, LAPS, MAX_PLAYERS, BARRICADE_HALF_WIDTH } from './game.js';
 import { Input, PAD_SLOTS } from './input.js';
+import { JoyconBridge } from './joycon.js';
 import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
 import { driftTier } from './truck.js';
@@ -24,6 +25,8 @@ const room = params.get('room') || 'main';
 const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const role = params.get('role') || (isLocal ? 'host' : 'client');
 const online = !manual || params.has('room');
+// Joy-Con 2 via UDP-broen i dev-serveren (bare på verts-maskinen, der kontrollerne sitter).
+if (!manual && isLocal) input.bridge = new JoyconBridge();
 // ?watch gjør en fjernskjerm til ren tilskuer (f.eks. en TV): den tar aldri en plass i løpet.
 const watch = role === 'client' && params.has('watch');
 // ?restart nullstiller spillet som kjører på Cloudflare (sendes én gang, og fjernes fra adressen så en ny innlasting ikke gjør det igjen).
