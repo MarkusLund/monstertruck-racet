@@ -2,6 +2,15 @@
 
 3D monstertruck-racing for 1–4 spillere (delt skjerm og/eller flere Mac-er), litt som første Mario Kart. Laget med [three.js](https://threejs.org/) og Gamepad API. Kjører i nettleseren på macOS (Chrome eller Safari).
 
+**Spill nå:** DEMO_URL
+
+- Tilfeldig generert bane for hvert løp, med bakker, ramper, fjord og fjell
+- 1–4 spillere på delt skjerm, eller flere maskiner via nettleseren (Cloudflare Workers eller lokal relay)
+- Tastatur, PS5 DualSense og Nintendo Switch 2-kontrollere (også én Joy-Con 2 per spiller), med vibrasjon
+- Power-ups, drift-boost, AI-motstandere og tilskuermodus
+- Syntetisert motorlyd og musikk (Web Audio, ingen lydfiler)
+- Ingen byggetrinn utover Vite, ren JavaScript og en deterministisk simulering som deles mellom nettleser og server
+
 ## Kom i gang
 
 ```bash
@@ -35,6 +44,8 @@ Macen ser ikke Switch 2-kontrollere som spillkontrollere av seg selv. Du trenger
 5. Åpne spillet og **trykk en knapp** på hver kontroller. Nettlesere viser ikke kontrollere før de er rørt. Startskjermen viser «✓ Switch 2 tilkoblet» per spiller. Den første kontrolleren blir spiller 1, den neste spiller 2, og så videre.
 
 Styring på Switch 2: **ZR** gass, **ZL** rygg/brems, **Y** hopp (knappen til venstre), **venstre stikke** eller d-pad for sving, **A** eller **+** for å starte, og d-pad opp/ned og venstre/høyre i menyen for AI-valg.
+
+**Én Joy-Con 2 per spiller (UDP-bro).** switch2mac trenger Apples HID-entitlement for å lage virtuelle gamepader, og uten det ser ikke nettleseren kontrollerne. Da leser dev-serveren (`npm start`, kun localhost) switch2macs UDP-strøm på 127.0.0.1:24800–24803 og sender den videre til spillet (`server/joycon.js`, `src/joycon.js`). Hver Joy-Con holdes sidelengs og blir én spiller, som i Mario Kart: stikken styrer, knappen til høyre gasser, SL eller knappen nedenfor bremser/rygger, SR eller knappene oppe og til venstre hopper, +/− bekrefter. `?jcflip=1` snur oppsettet. Vibrasjon (treff, støt, landing, power-ups, mål) sendes tilbake til kontrolleren, og virker også på DualSense. Broen finnes ikke i Cloudflare-utgaven.
 
 Feilsøking: kontrolleren kobler seg av etter noen sekunder hvis switch2mac ikke kjører. Vises den ikke i spillet, trykk en knapp på den med spillfanen i fokus, og sjekk at den står som tilkoblet i switch2mac. Åpne `?debug` hvis knappene virker feil.
 
@@ -104,3 +115,9 @@ Playwright-testene simulerer to DualSense-kontrollere (mocket Gamepad API) og ta
 - `src/sound.js`: lydmiksen, effekter, plassering (avstand og retning fra hver spillers truck) og styring av musikken
 - `src/engine-sound.js`: motorlyd (V8 bygget av enkelttenninger, automatgir, last, eksosresonanser)
 - `src/music.js`: prosedyremusikk (ny låt for hver bane, opptrapping på siste runde, fanfare i mål)
+- `server/worker.js`: Cloudflare Worker med ett Durable Object per rom som kjører simuleringen
+- `server/joycon.js`, `src/joycon.js`, `src/rumble.js`: UDP-bro for Joy-Con 2 og vibrasjon
+
+## Lisens
+
+[MIT](LICENSE)
