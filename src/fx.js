@@ -118,6 +118,7 @@ export class Fx {
     this.kick = [0, 0, 0, 0]; // zoom-støt (synkende FOV) per spillerskjerm
     this.slow = 0; // gjenstående sakte-film (virkelig tid)
     this.dustAcc = [0, 0, 0, 0];
+    this.trailAcc = [0, 0, 0, 0];
     this.stats = { hits: 0, bumps: 0 }; // brukes av tester
   }
 
@@ -270,10 +271,32 @@ export class Fx {
     }
   }
 
+  // Hjulløs truck som sklir på understellet (gnister og støv), og fly (røyk fra motoren og vindstriper bak vingene).
+  updateTrail(t, i, dt) {
+    const fx = Math.cos(t.theta), fz = Math.sin(t.theta);
+    const sliding = t.noWheels > 0 && !t.air && t.speed > 3;
+    if (!sliding && !(t.plane > 0)) { this.trailAcc[i] = 0; return; }
+    this.trailAcc[i] += dt * (sliding ? 40 : 55);
+    while (this.trailAcc[i] >= 1) {
+      this.trailAcc[i] -= 1;
+      if (sliding) {
+        const bx = t.x - fx * rnd(0.5, 2.5), bz = t.z - fz * rnd(0.5, 2.5), by = groundHeight(bx, bz);
+        this.spawn(bx, by + 0.3, bz, -fx * t.speed * 0.2 + rnd(-3, 3), rnd(2, 6), -fz * t.speed * 0.2 + rnd(-3, 3), rnd(0.25, 0.5), 0.3, 0, SPARK, 1, -26, 0.4, 1);
+        if (Math.random() < 0.4) this.spawn(bx, by + 0.3, bz, rnd(-1, 1), rnd(0.5, 1.5), rnd(-1, 1), rnd(0.5, 0.9), rnd(0.9, 1.4), 2.2, [0.7, 0.66, 0.6], 0.35, 0.4, 2.5);
+      } else {
+        // Røyk fra nesa og to striper fra vingespissene.
+        this.spawn(t.x + fx * 3.2, t.y + 1.8, t.z + fz * 3.2, -fx * 3 + rnd(-1, 1), rnd(-0.3, 0.8), -fz * 3 + rnd(-1, 1), rnd(0.6, 1), rnd(0.7, 1.1), 2, [0.55, 0.55, 0.58], 0.4, 0, 1.5);
+        const side = Math.random() < 0.5 ? -1 : 1;
+        this.spawn(t.x - fz * side * 6, t.y + 2, t.z + fx * side * 6, -fx * 6, 0, -fz * 6, rnd(0.4, 0.7), 0.35, 0.5, [0.95, 0.97, 1], 0.55, 0, 0.8);
+      }
+    }
+  }
+
   // Støv/jord bak bakhjulene når trucken kjører fort på bakken.
   updateDust(game, dt) {
     if (game.state !== 'racing' && game.state !== 'countdown') return;
     game.trucks.forEach((t, i) => {
+      this.updateTrail(t, i, dt);
       const frac = clamp((t.speed - 8) / (MAX_SPEED - 8), 0, 1);
       if (t.air || clearance(t) > 0.4 || frac <= 0) { this.dustAcc[i] = 0; return; }
       const offroad = !t.onRoad;
@@ -319,11 +342,18 @@ export class Fx {
       } else if (e.cause === 'shield') {
         this.sparks(t.x, y + 1.8, t.z, 26, 14, SHIELD_SPARK);
         this.addTrauma(e.truck, 0.45);
+      } else if (e.cause === 'wheelloss') {
+        this.sparks(t.x, y + 1.2, t.z, 28, 14);
+        this.dustPuff(t.x, y + 0.4, t.z, 12, [0.6, 0.6, 0.62]);
+        this.addTrauma(e.truck, 0.5);
       } else {
         this.sparks(t.x, y + 1, t.z, 20, 12);
         this.dustPuff(t.x, y + 0.4, t.z, 10);
         this.addTrauma(e.truck, 0.6);
       }
+    } else if (e.type === 'item' && e.item === 'plane') {
+      this.dustPuff(t.x, y + 0.8, t.z, 16, [0.9, 0.92, 0.96]);
+      this.sparks(t.x, y + 1.5, t.z, 14, 10, SHIELD_SPARK);
     } else if (e.type === 'bump') {
       this.stats.bumps++;
       const power = clamp(((e.power ?? 8) - 5) / 20, 0, 1);

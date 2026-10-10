@@ -13,6 +13,7 @@ test('integrasjon: løp med terreng, pads, olje, miner og effekter kjører uten 
 
   const r = await page.evaluate(async () => {
     const { groundHeight, clearance } = await import('/src/terrain.js');
+    const { deckAt } = await import('/src/track.js');
     const g = window.__game, game = g.game, { track } = game;
     // Legg olje og en mine rett foran begge truckene.
     game.trucks.forEach((t) => {
@@ -28,7 +29,7 @@ test('integrasjon: løp med terreng, pads, olje, miner og effekter kjører uten 
         const target = track.pts[(t.nearest.index + 9) % track.count];
         window.__pads.axis(i, 0, Math.max(-1, Math.min(1, wrap(Math.atan2(target.z - t.z, target.x - t.x) - t.theta) * 2.2)));
         window.__pads.set(i, 7, 1);
-        if (!t.air) minClearance = Math.min(minClearance, clearance(t));
+        if (!t.air) minClearance = Math.min(minClearance, clearance(t) - deckAt(track, t.s));
       });
       g.advance(1 / 60); // tegner hver ramme: render, fx og HUD kjøres
       maxParticles = Math.max(maxParticles, g.renderer.fx.live);
@@ -53,6 +54,6 @@ test('integrasjon: løp med terreng, pads, olje, miner og effekter kjører uten 
   expect(r.dist).toBeGreaterThan(100);
   expect(r.hits).toBeGreaterThan(0); // minene ble truffet
   expect(r.maxParticles).toBeGreaterThan(0);
-  expect(Math.abs(r.minClearance)).toBeLessThan(0.3); // trucken kjører på terrenget, ikke under eller over
+  expect(Math.abs(r.minClearance)).toBeLessThan(0.3); // trucken kjører på terrenget (eller brodekket), ikke under eller over
   expect(r.snapshot).toEqual(expect.arrayContaining(['oi', 'mi']));
 });

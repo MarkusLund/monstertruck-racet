@@ -95,4 +95,10 @@ export class JoyconBridge {
   pads() {
     return this.slots.flatMap((s, i) => (s ? [toPad(i, s.st, s.name)] : []));
   }
+
+  // Glemmer alle kontrollere. De som fortsatt er tilkoblet dukker opp igjen ved første knappetrykk,
+  // mens de som er koblet fra (uten at appen sier fra) blir borte.
+  forget() {
+    this.slots = [];
+  }
 }

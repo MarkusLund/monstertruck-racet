@@ -9,7 +9,7 @@ import { driftTier } from './truck.js';
 import { LAPS } from './game.js';
 
 const MUSIC_KEY = 'monstertruck-musikk';
-const MUSIC_LEVEL = 0.42; // musikken ligger litt under motoren (ca. 3 dB)
+const MUSIC_LEVEL = 0.672; // musikken er tydelig hørbar over effektene (ca. 1.6 × den gamle verdien)
 const HERE = { gain: 1, pan: 0, lp: 20000, own: true };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -54,8 +54,8 @@ export class Sound {
     comp.release.value = 0.25;
     comp.connect(ctx.destination);
     this.master = this.gain(comp, 0.9);
-    this.engineBus = this.gain(this.master, 1.1);
-    this.sfx = this.gain(this.master, 0.6);
+    this.engineBus = this.gain(this.master, 0.68);
+    this.sfx = this.gain(this.master, 0.37);
     this.musicBus = this.gain(this.master, this.musicLevel());
     const verb = ctx.createConvolver();
     verb.buffer = this.impulse(1.8);
@@ -242,8 +242,9 @@ export class Sound {
         speed, throttle: t.turbo > 0 && state !== 'countdown' ? 1 : th, accel: m.accel,
         free: state === 'countdown' || !!t.air,
         onRoad: t.onRoad !== false, air: !!t.air, drift: t.drift || 0, turbo: t.turbo || 0,
-        gain: w.gain * (state === 'finished' ? 0.6 : 1), pan: w.pan, lowpass: w.lp, doppler: m.dop,
+        gain: w.gain * (state === 'finished' ? 0.6 : 1) * (t.plane > 0 ? 0.2 : 1), pan: w.pan, lowpass: w.lp, doppler: m.dop,
       });
+      this.propeller(i, m, w, live && t.plane > 0 && !(t.rescue > 0));
       if (live) {
         if ((t.turbo || 0) > m.turbo + 0.25) this.boost(w);
         const tier = driftTier(t.drift || 0);
@@ -257,6 +258,41 @@ export class Sound {
       this.voices[i]?.update(dt, { on: false, speed: 0, throttle: 0, gain: 0 });
     }
     this.updateMusic(game, listeners);
+  }
+
+  // Propell mens trucken er et fly: en tung, svevende saw-tone med luftsus. Bygges første gang og skrus bare av og på.
+  propeller(i, m, w, on) {
+    if (!on && !m.prop) return;
+    const ctx = this.ctx;
+    if (!m.prop) {
+      const o = ctx.createOscillator(), lfo = ctx.createOscillator(), lfoGain = ctx.createGain();
+      const lp = ctx.createBiquadFilter(), air = ctx.createBufferSource(), airFilter = ctx.createBiquadFilter();
+      const out = ctx.createGain(), pan = ctx.createStereoPanner();
+      o.type = 'sawtooth';
+      o.frequency.value = 74;
+      lfo.frequency.value = 11; // bladene hakker i lufta
+      lfoGain.gain.value = 5;
+      lfo.connect(lfoGain).connect(o.frequency);
+      lp.type = 'lowpass';
+      lp.frequency.value = 520;
+      air.buffer = this.assets.noise;
+      air.loop = true;
+      airFilter.type = 'bandpass';
+      airFilter.frequency.value = 1800;
+      airFilter.Q.value = 0.7;
+      out.gain.value = 0;
+      o.connect(lp).connect(out);
+      air.connect(airFilter).connect(this.gain(out, 0.45));
+      out.connect(pan).connect(this.engineBus);
+      for (const n of [o, lfo, air]) n.start();
+      m.prop = { o, lfo, air, lp, out, pan };
+    }
+    const { out, pan, lp, o } = m.prop;
+    const t = ctx.currentTime;
+    out.gain.setTargetAtTime(on ? 0.16 * w.gain : 0, t, 0.12);
+    pan.pan.setTargetAtTime(w.pan || 0, t, 0.1);
+    lp.frequency.setTargetAtTime(Math.min(520, w.lp), t, 0.1);
+    o.frequency.setTargetAtTime(on ? 74 + 6 * Math.sin(t * 1.3 + i) : 74, t, 0.3);
   }
 
   updateMusic(game, listeners) {
@@ -340,6 +376,13 @@ export class Sound {
         this.noise(0.12, { vol: 0.14, from: 700, to: 200, at, dest: d });
         this.tone(140, 0.12, { vol: 0.14, slide: -50, at, dest: d });
       }
+    } else if (item === 'wheelloss') {
+      this.noise(0.5, { vol: 0.12, type: 'bandpass', from: 2400, to: 500, q: 2, dest: d });
+      this.tone(220, 0.4, { type: 'square', vol: 0.05, slide: -150, dest: d });
+    } else if (item === 'plane') {
+      this.tone(160, 0.9, { type: 'sawtooth', vol: 0.07, slide: 700, attack: 0.15, dest: d });
+      this.noise(0.9, { vol: 0.15, type: 'bandpass', from: 400, to: 3000, q: 1, attack: 0.1, dest: d });
+      [0, 4, 7].forEach((n, k) => this.tone(659 * 2 ** (n / 12), 0.25, { type: 'triangle', vol: 0.04, at: 0.3 + k * 0.07, dest: d }));
     }
     // Turbo får sitt «fwoosj» fra boost() når turboen starter.
   }
@@ -365,10 +408,19 @@ export class Sound {
 
   hit(e, w) {
     this.vary(1);
-    if (e.cause === 'rocket' && !e.shielded) this.explosion(w, 1);
+    if (e.cause === 'wheelloss') this.wheelLoss(w);
+    else if (e.cause === 'rocket' && !e.shielded) this.explosion(w, 1);
     else if (e.cause === 'mine' && !e.shielded) this.explosion(w, 0.75);
     else if (e.cause === 'rocket' || e.cause === 'mine' || e.cause === 'shield') this.deflect(w);
     else this.spinOut(w);
+  }
+
+  // Hjulene letter: et smell og skrapende metall mot asfalten.
+  wheelLoss(w) {
+    const d = this.dest(w, 0.2);
+    this.tone(110, 0.25, { type: 'square', vol: 0.12, slide: -60, dest: d });
+    this.noise(0.9, { vol: 0.16, type: 'bandpass', from: 3200, to: 900, q: 3, attack: 0.02, dest: d });
+    for (const at of [0.1, 0.25, 0.42]) this.tone(740, 0.12, { type: 'triangle', vol: 0.04, slide: -300, at, dest: d });
   }
 
   // Eksplosjon i lag: et kort støt, et dypt dunk som faller, en støyhale som mørkner og litt knitring.

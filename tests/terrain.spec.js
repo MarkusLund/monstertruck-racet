@@ -36,7 +36,7 @@ test('trucken følger bakken', async ({ page }) => {
   for (let i = 0; i < 40; i++) {
     await advance(page, 0.25);
     const t = (await state(page)).trucks[0];
-    if (!t.air) gap = Math.max(gap, Math.abs(t.y - t.ground));
+    if (!t.air) gap = Math.max(gap, Math.abs(t.y - t.ground - t.deck));
     ys.add(Math.round(t.y * 10));
     dist = t.dist;
   }
@@ -60,14 +60,14 @@ test('hopp gir fortsatt luft, relativt til bakken', async ({ page }) => {
     await advance(page, 0.05);
     const t = (await state(page)).trucks[0];
     if (t.air) wasAir = true;
-    maxUp = Math.max(maxUp, t.y - t.ground);
+    maxUp = Math.max(maxUp, t.y - t.ground - t.deck);
   }
   await advance(page, 1);
   const after = (await state(page)).trucks[0];
   expect(wasAir).toBe(true);
   expect(maxUp).toBeGreaterThan(2.5);
   expect(after.air).toBe(false);
-  expect(after.y).toBeCloseTo(after.ground, 2);
+  expect(after.y).toBeCloseTo(after.ground + after.deck, 2);
 });
 
 test('høyde over bakken brukes, ikke absolutt y', async ({ page }) => {

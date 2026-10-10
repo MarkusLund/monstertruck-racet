@@ -1,6 +1,6 @@
-import { nearest, posAt, wrapS, heightAt, HALF_WIDTH, WALL_LAT } from './track.js';
+import { nearest, posAt, wrapS, heightAt, deckAt, halfWidthAt, WALL_MARGIN } from './track.js';
 import { groundHeight, groundSlope, terrainLevels } from './terrain.js';
-import { fenceAt, FENCE_LAT, FENCE_BAND } from './fences.js';
+import { fenceAt, fenceLat, FENCE_BAND } from './fences.js';
 
 // Arkade-fysikk: bare gass og sving. Trucken har en fartsvektor med litt sidegrep (litt sladd i svingene).
 export const MAX_SPEED = 40;
@@ -16,9 +16,9 @@ const SLOPE_ACCEL = 14; // tyngdekraft langs bakken: litt tregere opp, litt rask
 const STATIC_GRIP = 1.5; // en truck som står stille uten gass blir stående i slakere bakker enn dette (m/s²)
 const FALL_OFF = 0.3; // faller bakken mer enn dette på ett steg, letter trucken (kjører utfor en kant)
 
-// Utenfor veien: gresskanten (opp til WALL_LAT) er fri, lenger ute går klokka, og etter en stund blir man hentet tilbake.
+// Utenfor veien: gresskanten (opp til WALL_MARGIN utenfor asfalten) er fri, lenger ute går klokka, og etter en stund blir man hentet tilbake.
 export const OFF_GRACE = 2.5; // sekunder ute i terrenget før man hentes
-const FAR_LAT = WALL_LAT + 55; // så langt ute hentes man med en gang
+const FAR_MARGIN = WALL_MARGIN + 55; // så langt utenfor asfalten hentes man med en gang
 const MAX_STEP_DS = 25; // hopper nærmeste banepunkt mer enn dette på ett steg, har man skåret over til en annen del av banen
 export const RESCUE_TIME = 1.4; // hele redningen: trucken forsvinner, flyttes og dukker opp igjen (styringen er låst)
 export const RESCUE_SWAP = 0.6; // når redningsklokka passerer dette flyttes trucken tilbake på veien
@@ -29,6 +29,12 @@ export const COIN_ACCEL_MAX = 0.6;
 export const TURBO_TIME = 2.2;
 export const SHIELD_TIME = 10;
 export const STUN_TIME = 1.4;
+export const PLANE_TIME = 5; // flyet suser over alt i så mange sekunder
+export const PLANE_SPEED = MAX_SPEED * 1.5;
+export const PLANE_ALTITUDE = 12;
+const PLANE_RAMP = 0.8; // sekunder å stige ved start og synke ved slutt
+const PLANE_LAND_SPEED = MAX_SPEED * 1.1;
+const NOWHEELS_DRAG = 0.45; // hjulløs: friksjon mot underlaget (1/s)
 // Drift-boost: sladd (full styring i fart + gass) bygger ladning (sekunder); ved utgang får trucken turbo.
 const DRIFT_MIN_SPEED = 20;
 const DRIFT_MIN_STEER = 0.55;
@@ -52,7 +58,7 @@ export class Truck {
     const p = posAt(track, s, lat);
     this.x = p.x;
     this.z = p.z;
-    this.y = groundHeight(p.x, p.z); // y er absolutt høyde: terreng + hoppehøyde
+    this.y = groundHeight(p.x, p.z) + deckAt(track, s); // y er absolutt høyde: terreng + brodekke + hoppehøyde
     this.vy = 0;
     this.air = false;
     this.rampVy = 0;
@@ -75,6 +81,8 @@ export class Truck {
     // Effekter
     this.turbo = 0;
     this.shield = 0;
+    this.noWheels = 0; // hjulstyv: ingen styring, gass eller brems
+    this.plane = 0; // sekunder igjen som fly
     this.stun = 0;
     this.slick = 0; // olje: lite grep og rykkete styring en kort stund
     this.spin = 0; // kort spinn (én runde) etter å ha blitt truffet bakfra av en annen truck
@@ -96,7 +104,7 @@ export class Truck {
     const n = nearest(track, this.x, this.z, this.hint);
     this.hint = n.index;
     this.lat = n.lat;
-    this.onRoad = Math.abs(n.lat) <= HALF_WIDTH;
+    this.onRoad = Math.abs(n.lat) <= track.pts[n.index].hw;
     this.nearest = n;
     const sNew = n.s + n.along;
     if (accumulate) {
@@ -140,7 +148,8 @@ export class Truck {
       const w = wrapS(track, s);
       if (w > j.s0 - 8 && w < j.s1 + 6) { dist -= w - (j.s0 - 8); s = j.s0 - 8; }
     }
-    const lat = Math.max(-(HALF_WIDTH - 3), Math.min(HALF_WIDTH - 3, this.safeLat));
+    const edge = halfWidthAt(track, s) - 3;
+    const lat = Math.max(-edge, Math.min(edge, this.safeLat));
     const p = posAt(track, s, lat);
     this.x = p.x;
     this.z = p.z;
@@ -167,6 +176,57 @@ export class Truck {
     this.say(why === 'water' ? 'Plask! Tilbake til veien' : why === 'rocket' ? 'BOOM! Truffet av rakett' : 'Tilbake til veien', this.rescue);
   }
 
+  // Fly: suser over alt (ingen kollisjoner, ingen redning) langs banen med fast, høy fart. Spilleren styrer sideplasseringen
+  // litt. Høyden stiger glatt ved start og synker ved slutt, og til slutt landes trucken på veien.
+  stepPlane(input, dt, track) {
+    this.plane = Math.max(0, this.plane - dt);
+    const halfWidth = halfWidthAt(track, this.s);
+    const steer = Math.max(-1, Math.min(1, input.steer || 0));
+    const vf = this.vx * Math.cos(this.theta) + this.vz * Math.sin(this.theta);
+    const speed = vf + (PLANE_SPEED - vf) * Math.min(1, 3 * dt);
+    const aim = posAt(track, this.s + 14 + speed * 0.3, steer * halfWidth * 0.6);
+    this.theta += angleDiff(Math.atan2(aim.z - this.z, aim.x - this.x), this.theta) * Math.min(1, 4 * dt);
+    this.vx = Math.cos(this.theta) * speed;
+    this.vz = Math.sin(this.theta) * speed;
+    this.x += this.vx * dt;
+    this.z += this.vz * dt;
+    this.locate(track);
+    this.skipped = false;
+    this.hitWall = false;
+    this.drift = this.driftGap = this.driftDir = 0;
+
+    const ground = groundHeight(this.x, this.z) + heightAt(track, this.s, this.lat);
+    if (this.plane > 0) {
+      const lift = Math.min(1, (PLANE_TIME - this.plane) / PLANE_RAMP, this.plane / PLANE_RAMP);
+      const f = lift * lift * (3 - 2 * lift);
+      this.y = ground + PLANE_ALTITUDE * f;
+      this.air = true;
+    } else {
+      // Landing på veien: sideplasseringen klemmes innenfor asfalten.
+      const edge = halfWidth - 3;
+      if (Math.abs(this.lat) > edge) {
+        const p = posAt(track, this.s, Math.sign(this.lat) * edge);
+        this.x = p.x;
+        this.z = p.z;
+        this.locate(track, false);
+      }
+      this.y = groundHeight(this.x, this.z) + heightAt(track, this.s, this.lat);
+      this.vy = this.rampVy = 0;
+      this.air = false;
+      this.landed = true;
+      this.vx = Math.cos(this.theta) * PLANE_LAND_SPEED;
+      this.vz = Math.sin(this.theta) * PLANE_LAND_SPEED;
+      this.safeS = this.s;
+      this.safeLat = this.lat;
+      this.safeDist = this.dist;
+      this.offTime = 0;
+    }
+    this.onRoad = Math.abs(this.lat) <= halfWidth;
+    this.wrongWay = 0;
+    this.roll += (-steer * 0.25 - this.roll) * Math.min(1, 6 * dt);
+    this.wheelSpin += speed * dt / 1.1;
+  }
+
   step(input, dt, track, locked = false) {
     this.rescued = null;
     if (this.rescue > 0) {
@@ -177,6 +237,7 @@ export class Truck {
     }
     this.turbo = Math.max(0, this.turbo - dt);
     this.shield = Math.max(0, this.shield - dt);
+    this.noWheels = Math.max(0, this.noWheels - dt);
     this.stun = Math.max(0, this.stun - dt);
     this.slick = Math.max(0, this.slick - dt);
     this.spin = Math.max(0, this.spin - dt);
@@ -184,11 +245,17 @@ export class Truck {
     this.landed = false;
     this.jumped = false;
 
+    if (this.plane > 0 && !this.rescue) {
+      this.stepPlane(input, dt, track);
+      return;
+    }
+
+    const wheelless = this.noWheels > 0;
     const stunned = this.stun > 0 || this.spin > 0;
-    const throttle = locked || stunned || input.brake > 0 ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
-    const brake = locked || stunned ? 0 : Math.max(0, Math.min(1, input.brake || 0));
-    const jump = !locked && !stunned && !!input.jump;
-    const steer = locked || stunned ? 0 : Math.max(-1, Math.min(1, input.steer + (this.slick > 0 ? Math.sin(this.slick * 14) * 0.5 : 0)));
+    const throttle = locked || stunned || wheelless || input.brake > 0 ? 0 : Math.max(this.turbo > 0 ? 1 : 0, Math.min(1, Math.max(0, input.throttle)));
+    const brake = locked || stunned || wheelless ? 0 : Math.max(0, Math.min(1, input.brake || 0));
+    const jump = !locked && !stunned && !wheelless && !!input.jump;
+    const steer = locked || stunned || wheelless ? 0 : Math.max(-1, Math.min(1, input.steer + (this.slick > 0 ? Math.sin(this.slick * 14) * 0.5 : 0)));
     const fx = Math.cos(this.theta), fz = Math.sin(this.theta);
     const sx = -fz, sz = fx;
     let vf = this.vx * fx + this.vz * fz;
@@ -201,7 +268,11 @@ export class Truck {
     const coinMul = Math.min(COIN_ACCEL_MAX, this.score * COIN_ACCEL);
     const accMul = 1 + (this.turbo > 0 ? 1.4 : 0) + 0.6 * this.draft + 0.5 * this.catchup + coinMul;
     const max = (this.onRoad ? MAX_SPEED : OFFROAD_MAX) * (0.35 + 0.65 * throttle) * maxMul;
-    if (!air) {
+    if (!air && wheelless) {
+      // Uten hjul: ingen gass, brems eller styring, bare friksjon og tyngdekraft langs bakken.
+      vf -= vf * NOWHEELS_DRAG * dt;
+      vf -= groundSlope(this.x, this.z, this.theta).forward * SLOPE_ACCEL * dt;
+    } else if (!air) {
       if (vf < max) vf = Math.min(max, vf + ACCEL * accMul * throttle * dt);
       else vf -= (vf - max) * (this.onRoad ? 1.2 : 3) * dt;
       vf -= vf * (throttle > 0 ? 0.12 : 0.7) * dt; // rullemotstand, mer uten gass
@@ -220,7 +291,7 @@ export class Truck {
       this.jumped = true;
     }
     this.updateDrift(dt, steer, throttle, stunned);
-    vs *= Math.exp(-GRIP * (air || this.slick > 0 ? 0.1 : 1) * dt);
+    vs *= Math.exp(-GRIP * (air || wheelless || this.slick > 0 ? 0.1 : 1) * dt);
 
     const speedFrac = Math.min(1, Math.abs(vf) / MAX_SPEED);
     let turn = steer * TURN_RATE * Math.min(1, Math.abs(vf) / 8) * (1 - 0.35 * Math.min(1, speedFrac));
@@ -247,11 +318,14 @@ export class Truck {
     // Gjerder: stopper trucken fra begge sider (rundt endene og over i et hopp kommer man forbi). Innenfra skyves den
     // tilbake, mister farten utover og dreies mot banens retning så den aldri setter seg fast.
     const a = Math.abs(n.lat);
+    const hw = track.pts[n.index].hw;
+    const kind = fenceAt(track, n.index, n.lat);
+    const fence = kind ? fenceLat(track, n.index, kind) : 0;
     this.hitWall = false;
-    if (a > FENCE_LAT && a < FENCE_LAT + FENCE_BAND && fenceAt(track, n.index, n.lat) && this.y - groundHeight(this.x, this.z) < 1.2) {
+    if (kind && a > fence && a < fence + FENCE_BAND && this.y - groundHeight(this.x, this.z) - deckAt(track, this.s) < 1.2) {
       const side = Math.sign(n.lat);
-      const inside = Math.abs(prevLat) < FENCE_LAT + FENCE_BAND / 2;
-      const target = inside ? FENCE_LAT : FENCE_LAT + FENCE_BAND;
+      const inside = Math.abs(prevLat) < fence + FENCE_BAND / 2;
+      const target = inside ? fence : fence + FENCE_BAND;
       const move = (a - target) * side;
       this.x -= n.nx * move;
       this.z -= n.nz * move;
@@ -295,15 +369,15 @@ export class Truck {
     // Utenfor veien: husk siste trygge punkt, og hent trucken tilbake hvis den er for lenge eller for langt ute,
     // havner i fjorden eller skjærer over til en annen del av banen.
     const lat = Math.abs(this.lat);
-    if (!this.air && lat <= HALF_WIDTH && !this.rescue && heightAt(track, this.s, this.lat) === 0) {
+    if (!this.air && lat <= hw && !this.rescue && heightAt(track, this.s, this.lat) === 0) {
       this.safeS = this.s;
       this.safeLat = this.lat;
       this.safeDist = this.dist;
     }
-    this.offTime = lat > WALL_LAT && !this.rescue ? this.offTime + dt : 0;
+    this.offTime = lat > hw + WALL_MARGIN && !this.rescue ? this.offTime + dt : 0;
     if (!locked) {
       if (this.y < terrainLevels().water + 0.3) this.startRescue('water');
-      else if (lat > FAR_LAT || (this.skipped && lat > HALF_WIDTH) || this.offTime > OFF_GRACE) this.startRescue('off');
+      else if (lat > hw + FAR_MARGIN || (this.skipped && lat > hw) || this.offTime > OFF_GRACE) this.startRescue('off');
       else if (this.offTime > 0.3 && (this.msgTimer <= 0 || this.msg.startsWith('Utenfor'))) this.say(`Utenfor veien! ${Math.ceil(OFF_GRACE - this.offTime)}`, 0.3);
     }
     this.skipped = false;

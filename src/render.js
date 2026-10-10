@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { posAt, heightAt, SPACING } from './track.js';
+import { posAt, heightAt, deckAt, SPACING } from './track.js';
 import { MAX_SPEED, driftTier, RESCUE_TIME, RESCUE_SWAP } from './truck.js';
 import { buildFences } from './fencemesh.js';
 import { groundHeight, groundSlope, roadDistance } from './terrain.js';
@@ -122,24 +122,29 @@ function numberTexture(n, color) {
   });
 }
 
-// Flate bånd langs banen (vei, kantstein, midtstrek) med én farge per segment.
+// Flate bånd langs banen (vei, kantstein, midtstrek) med én farge per segment. latA/latB: sideforskyvning
+// (tall, eller funksjon av banepunktet så båndet følger veibredden). Båndet løftes med brodekket.
 function strip(track, latA, latB, y, colorAt, material, vScale = 1 / 14) {
   const pos = [], col = [], uv = [];
   const { pts, count } = track;
   const c = new THREE.Color();
-  const segs = Math.max(1, Math.ceil(Math.abs(latB - latA) / 3));
+  const at = (v, p) => (typeof v === 'function' ? v(p) : v);
+  const segs = Math.max(1, Math.ceil(Math.abs(at(latB, pts[0]) - at(latA, pts[0])) / 3)); // tallet gjelder det bredeste stedet (start)
   for (let i = 0; i < count; i++) {
     const a = pts[i], b = pts[(i + 1) % count];
     const color = colorAt(i);
     if (!color) continue;
     c.set(color);
-    const v = (p, lat) => { const x = p.x + p.nx * lat, z = p.z + p.nz * lat; return [x, groundHeight(x, z) + y, z]; };
+    const v = (p, f) => {
+      const lat = at(latA, p) + (at(latB, p) - at(latA, p)) * f;
+      const x = p.x + p.nx * lat, z = p.z + p.nz * lat;
+      return [x, groundHeight(x, z) + y + p.deck, z];
+    };
     const va = i * SPACING * vScale, vb = (i + 1) * SPACING * vScale;
     // Delt på tvers så veien følger terrenget.
     for (let k = 0; k < segs; k++) {
-      const la = latA + (latB - latA) * (k / segs), lb = latA + (latB - latA) * ((k + 1) / segs);
       const ua = k / segs, ub = (k + 1) / segs;
-      const quad = [v(a, la), v(a, lb), v(b, lb), v(a, la), v(b, lb), v(b, la)];
+      const quad = [v(a, ua), v(a, ub), v(b, ub), v(a, ua), v(b, ub), v(b, ua)];
       const uvs = [[ua, va], [ub, va], [ub, vb], [ua, va], [ub, vb], [ua, vb]];
       for (const q of quad) { pos.push(...q); col.push(c.r, c.g, c.b); }
       for (const t of uvs) uv.push(...t);
@@ -277,6 +282,34 @@ function buildTruck(colors, number, tire) {
   return { root, chassis, wheels };
 }
 
+// Enkelt fly i spillerfargen: kropp, vinger, hale og en propell som roterer om x-aksen (fremover er +x som på trucken).
+function buildPlane(colors) {
+  const g = new THREE.Group();
+  const paint = new THREE.MeshStandardMaterial({ color: colors.body, roughness: 0.3, metalness: 0.25 });
+  const dark = new THREE.MeshStandardMaterial({ color: colors.dark, roughness: 0.5 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x7fb8e6, roughness: 0.05, metalness: 0.6 });
+  const part = (geo, mat, x, y, z) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    g.add(m);
+    return m;
+  };
+  const body = part(new THREE.CylinderGeometry(0.9, 0.6, 7, 12), paint, 0, 0, 0);
+  body.rotation.z = Math.PI / 2;
+  part(new THREE.SphereGeometry(0.9, 12, 8), dark, 3.5, 0, 0); // nese
+  part(new THREE.SphereGeometry(0.7, 10, 8), glass, 0.8, 0.7, 0); // cockpit
+  part(new THREE.BoxGeometry(2, 0.2, 12), paint, 0.4, 0.2, 0); // vinger
+  part(new THREE.BoxGeometry(1.2, 0.15, 4), dark, -3.2, 0.3, 0); // høyderor
+  part(new THREE.BoxGeometry(1.3, 1.6, 0.15), dark, -3.2, 1.1, 0); // halefinne
+  const prop = new THREE.Group();
+  prop.position.set(4.4, 0, 0);
+  prop.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.35, 4.2), dark));
+  g.add(prop);
+  g.visible = false;
+  return { plane: g, prop };
+}
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -341,14 +374,14 @@ export class Renderer {
 
     const asphalt = asphaltTexture();
     asphalt.repeat.set(1, 1);
-    const road = strip(track, -hw, hw, 0.04, (i) => (i % 8 < 4 ? 0xcfd0d4 : 0xe0e1e6),
+    const road = strip(track, (p) => -p.hw, (p) => p.hw, 0.04, (i) => (i % 8 < 4 ? 0xcfd0d4 : 0xe0e1e6),
       new THREE.MeshStandardMaterial({ map: asphalt, bumpMap: asphalt, bumpScale: 0.6, roughness: 0.85, metalness: 0 }), 1 / 16);
     scene.add(road);
     const curb = (a, b) => strip(track, a, b, 0.07, (i) => (Math.floor(i / 2) % 2 ? 0xe8412c : 0xf4f4f4));
-    scene.add(curb(hw, hw + 1.4), curb(-hw - 1.4, -hw));
+    scene.add(curb((p) => p.hw, (p) => p.hw + 1.4), curb((p) => -p.hw - 1.4, (p) => -p.hw));
     scene.add(strip(track, -0.18, 0.18, 0.08, (i) => (i % 6 < 3 ? 0xf0f0f0 : null)));
     // Hvite kantlinjer innenfor kantsteinen.
-    for (const side of [-1, 1]) scene.add(strip(track, side * (hw - 0.45), side * (hw - 0.15), 0.085, () => 0xf0f0f0));
+    for (const side of [-1, 1]) scene.add(strip(track, (p) => side * (p.hw - 0.45), (p) => side * (p.hw - 0.15), 0.085, () => 0xf0f0f0));
 
     // Autovern, skigard og kantstolper (ingen sammenhengende barriere: man kan kjøre ut i terrenget).
     scene.add(buildFences(track));
@@ -362,10 +395,11 @@ export class Renderer {
       }
     });
     const start = posAt(track, 0, 0);
+    const startHw = track.pts[0].hw; // veien er bredest ved start/mål
     const finish = new THREE.Group();
     finish.position.set(start.x, groundHeight(start.x, start.z), start.z);
     finish.rotation.y = -start.theta;
-    const line = new THREE.Mesh(new THREE.PlaneGeometry(3, hw * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.7 }));
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(3, startHw * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.7 }));
     line.receiveShadow = true;
     line.rotation.x = -Math.PI / 2;
     line.position.y = 0.1;
@@ -373,11 +407,11 @@ export class Renderer {
     const poleMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.4, metalness: 0.5 });
     for (const side of [-1, 1]) {
       const pole = new THREE.Mesh(new THREE.BoxGeometry(0.8, 9, 0.8), poleMat);
-      pole.position.set(0, 4.5, side * (hw + 2.2));
+      pole.position.set(0, 4.5, side * (startHw + 2.2));
       pole.castShadow = true;
       finish.add(pole);
     }
-    const banner = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, (hw + 2.2) * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.6 }));
+    const banner = new THREE.Mesh(new THREE.BoxGeometry(2, 1.8, (startHw + 2.2) * 2), new THREE.MeshStandardMaterial({ map: checker, roughness: 0.6 }));
     banner.castShadow = true;
     banner.position.y = 9;
     finish.add(banner);
@@ -452,6 +486,16 @@ export class Renderer {
       bubble.position.y = 2;
       bubble.visible = false;
       t.root.add(bubble);
+      const { plane, prop } = buildPlane(c);
+      t.root.add(plane);
+      // Skygge på bakken under flyet (ligger i scenen, ikke i trucken, så den blir på bakken).
+      const shadow = new THREE.Mesh(
+        new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false }),
+      );
+      shadow.visible = false;
+      this.scene.add(shadow);
+      t.wheels.forEach((w) => w.userData.base = w.position.clone());
       // Drift-gnister/røyk ved bakhjulene; fargen følger drift-ladningen.
       const sparkGeo = new THREE.BufferGeometry();
       sparkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SPARKS * 3), 3));
@@ -461,7 +505,7 @@ export class Renderer {
       sparks.visible = false;
       t.root.add(sparks);
       this.scene.add(t.root);
-      return { ...t, flames, bubble, sparks };
+      return { ...t, flames, bubble, sparks, plane, prop, shadow, lostFor: 0 };
     });
     // Item-boks (roterende «?»-kube), veisperre og rakett deler geometri.
     this.boxGeo = new THREE.BoxGeometry(2.2, 2.2, 2.2);
@@ -571,6 +615,7 @@ export class Renderer {
       if (b) {
         m.position.set(b.x, groundHeight(b.x, b.z) - 0.2, b.z);
         m.rotation.y = -b.theta;
+        m.scale.z = b.halfWidth / (game.track.halfWidth + 0.4); // bredere der veien er bredere
         // Blinker når den snart forsvinner.
         m.visible = b.life > 3 || Math.floor(time * 8) % 2 === 0;
       }
@@ -639,6 +684,39 @@ export class Renderer {
     if (Math.abs(next - q) > 0.01) { this.quality = next; this.applySize(); }
   }
 
+  // Hjulstyv (hjulene letter og trucken sklir på understellet) og fly (egen modell og skygge på bakken).
+  updateSpecial(m, t, time, dt) {
+    const plane = t.plane > 0;
+    const lost = t.noWheels > 0;
+    m.lostFor = lost ? m.lostFor + dt : 0; // sekunder siden hjulene løsnet
+    m.wheels.forEach((w, k) => {
+      const base = w.userData.base;
+      w.position.copy(base);
+      w.scale.setScalar(1);
+      if (lost && m.lostFor < 0.8) {
+        const side = k % 2 ? -1 : 1;
+        w.position.x += (k < 2 ? 1 : -1) * m.lostFor * 5;
+        w.position.z += side * m.lostFor * 9;
+        w.position.y += m.lostFor * 7 - 22 * m.lostFor * m.lostFor;
+        w.scale.setScalar(1 - m.lostFor / 0.8);
+      }
+      w.visible = !plane && (!lost || m.lostFor < 0.8);
+    });
+    if (lost && !plane) m.chassis.position.y -= 0.7;
+    m.chassis.visible = !plane;
+    m.plane.visible = plane;
+    m.shadow.visible = plane;
+    if (!plane) return;
+    m.prop.rotation.x = time * 60;
+    m.plane.rotation.x = Math.sin(time * 2.2) * 0.12 + t.roll;
+    m.plane.position.y = Math.sin(time * 3) * 0.3;
+    m.flames.visible = false;
+    m.shadow.position.set(t.x, groundHeight(t.x, t.z) + 0.15, t.z);
+    m.shadow.rotation.y = -t.theta;
+    m.shadow.scale.set(5.5, 1, 6.5);
+    m.shadow.material.opacity = 0.45;
+  }
+
   updateCamera(i, truck, dt, snap) {
     const cam = this.cameras[i];
     const ease = (rate) => (snap ? 1 : Math.min(1, rate * dt));
@@ -651,8 +729,9 @@ export class Renderer {
     this.camSpeed[i] += (Math.min(1, truck.speed / MAX_SPEED) - this.camSpeed[i]) * ease(1.6);
     const frac = this.camSpeed[i];
     const ground = groundHeight(truck.x, truck.z);
-    this.camGround[i] += (ground - this.camGround[i]) * ease(4);
-    const base = this.camGround[i], up = truck.y - ground; // up: høyde over bakken (hopp)
+    const deck = deckAt(this.trackRef, truck.s); // på broen ligger veien høyere enn bakken
+    this.camGround[i] += (ground + deck - this.camGround[i]) * ease(4);
+    const base = this.camGround[i], up = truck.y - ground - deck; // up: høyde over veien (hopp)
     // Bakken et stykke foran: i en utforkjøring hever kameraet seg og ser ned over kanten, i en motbakke ser det opp.
     const far = 22 + frac * 14;
     const ax = truck.x + fx * far, az = truck.z + fz * far;
@@ -740,6 +819,7 @@ export class Renderer {
       m.bubble.material.opacity = 0.34 + Math.sin(time * 6) * 0.1;
       m.bubble.scale.setScalar(1 + Math.sin(time * 6) * 0.03);
       m.wheels.forEach((w) => { w.rotation.z = -t.wheelSpin; });
+      this.updateSpecial(m, t, time, dt);
       this.updateCamera(i, t, dt, snap || moved);
       this.fx.applyCamera(this.cameras[i], i, time);
     });

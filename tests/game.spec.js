@@ -237,8 +237,8 @@ test.describe('Spillmekanikk', () => {
   test('gress bremser ned, asfalt er raskest', async ({ page }) => {
     await open(page);
     await startRace(page);
-    await teleport(page, 0, 40, 0);
-    await teleport(page, 1, 40, 14); // utenfor asfalten, men innenfor barrieren
+    await teleport(page, 0, 300, 0);
+    await teleport(page, 1, 300, 14); // utenfor asfalten (11 m her, 300 m fra start), men innenfor barrieren
     await page.keyboard.down('s');
     await page.keyboard.down('ArrowUp');
     await advance(page, 0.1);
@@ -316,7 +316,7 @@ test.describe('Spillmekanikk', () => {
     expect(s.trucks[0].msg).toMatch(/Plask/);
     await advance(page, 1.5);
     s = await state(page);
-    expect(Math.abs(s.trucks[0].lat)).toBeLessThanOrEqual(11);
+    expect(Math.abs(s.trucks[0].lat)).toBeLessThanOrEqual(15); // på asfalten (15 m der veien er bredest)
     expect(s.trucks[0].rescue).toBe(0);
   });
 
@@ -325,11 +325,19 @@ test.describe('Spillmekanikk', () => {
     await startRace(page);
     const spot = await page.evaluate(async () => {
       const F = await import('/src/fences.js');
-      const { track } = window.__game.game;
-      const run = track.fences.runs.find((r) => r.len > 40 && r.i0 > 30 && r.i0 + r.len < track.count - 10);
-      return run && { s: (run.i0 + 10) * 2, side: run.side ? 1 : -1, fence: F.FENCE_LAT };
+      const g = window.__game.game;
+      // En bane med en lang rett gjerdestrekning utenfor det brede startområdet.
+      for (let seed = 1; seed < 60; seed++) {
+        g.start(2, seed);
+        const { track } = g;
+        const run = track.fences.runs.find((r) => r.len > 35 && r.i0 > 150 && r.i0 + r.len < track.count - 150);
+        if (run) return { s: (run.i0 + 4) * 2, side: run.side ? 1 : -1, fence: F.fenceLat(track, run.i0 + 4, run.kind) };
+      }
+      return null;
     });
     expect(spot).toBeTruthy();
+    await page.evaluate(() => window.__game.quiet());
+    await advance(page, 3.3);
     await teleport(page, 0, spot.s, spot.side * 8);
     // Pek trucken skrått ut mot gjerdet og gi gass.
     await page.evaluate((sd) => { const t = window.__game.game.trucks[0]; t.theta += sd * 0.6; }, spot.side);

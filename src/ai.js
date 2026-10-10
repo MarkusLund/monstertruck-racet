@@ -54,7 +54,7 @@ export function createAI(seed, truckId, level) {
   return {
     input(game, i) {
       const t = game.trucks[i];
-      if (game.state !== 'racing' || t.finished || t.rescue > 0) {
+      if (game.state !== 'racing' || t.finished || t.rescue > 0 || t.noWheels > 0 || t.plane > 0) {
         stillTime = reverseTime = 0;
         return { ...QUIET };
       }

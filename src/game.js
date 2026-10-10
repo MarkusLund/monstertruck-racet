@@ -1,9 +1,9 @@
-import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS, HALF_WIDTH } from './track.js';
+import { buildTrack, placeCoins, placeItemBoxes, posAt, wrapS, halfWidthAt, clearOfZones } from './track.js';
 import { clearance, setTerrain } from './terrain.js';
 import { placePads, onPad, PAD_TURBO } from './pads.js';
 import { placeFences } from './fences.js';
-import { Truck, TURBO_TIME, SHIELD_TIME } from './truck.js';
-import { pickItem, dropOil, dropMine, updateOils, updateMines } from './powerups.js';
+import { Truck, TURBO_TIME, SHIELD_TIME, PLANE_TIME } from './truck.js';
+import { pickItem, wheelLossTime, dropOil, dropMine, updateOils, updateMines } from './powerups.js';
 
 export const DT = 1 / 60;
 export const LAPS = 3;
@@ -16,9 +16,9 @@ const ROCKET_SPEED = 60;
 export const ROCKET_HIT_HEIGHT = 1.2; // er trucken høyere oppe enn dette, flyr raketten under
 const BARRICADE_AHEAD = 60;
 const BARRICADE_LIFE = 14;
-export const BARRICADE_HALF_WIDTH = HALF_WIDTH + 0.4; // dekker hele asfalten: den som ligger foran må kjøre omveien i gresset
+export const barricadeHalfWidth = (track, s) => halfWidthAt(track, s) + 0.4; // dekker hele asfalten: den som ligger foran må kjøre omveien i gresset
 export const MAX_PLAYERS = 4;
-const GRID = [{ lat: -3.5, back: 7 }, { lat: 3.5, back: 7 }, { lat: -3.5, back: 15 }, { lat: 3.5, back: 15 }]; // startoppstilling bak streken
+const GRID_BACK = 7, GRID_SPACING = 6; // startoppstilling: alle i én rad like bak streken, jevnt fordelt sideveis (veien er 30 m bred her)
 
 const wrapDiff = (d, length) => d - Math.round(d / length) * length;
 
@@ -37,7 +37,7 @@ export { clearance };
 
 // Felt som sendes til tilskuere/fjernspillere hver gang verten sender et øyeblikksbilde.
 export const TRUCK_FIELDS =['x', 'y', 'z', 'theta', 'vx', 'vz', 'vy', 'roll', 'wheelSpin', 'air', 'rampVy', 'onRoad', 'lat', 's', 'dist',
-  'wrongWay', 'offTime', 'rescue', 'rescueWhy', 'drift', 'turbo', 'shield', 'stun', 'slick', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
+  'wrongWay', 'offTime', 'rescue', 'rescueWhy', 'drift', 'turbo', 'shield', 'noWheels', 'plane', 'stun', 'slick', 'draft', 'catchup', 'msg', 'msgTimer', 'score', 'lapsDone', 'finished'];
 
 // Spilltilstander: 'menu' -> 'countdown' -> 'racing' -> 'finished'
 export class Game {
@@ -71,7 +71,7 @@ export class Game {
       t.score = 0;
       t.finished = false;
       t.lapsDone = 0;
-      t.place(track, track.length - GRID[i].back, GRID[i].lat, -GRID[i].back);
+      t.place(track, track.length - GRID_BACK, (i - (this.trucks.length - 1) / 2) * GRID_SPACING, -GRID_BACK);
     });
     this.coins = placeCoins(track, r);
     this.boxes = placeItemBoxes(track);
@@ -173,7 +173,7 @@ export class Game {
         const a = this.trucks[i], b = this.trucks[k];
         const dx = b.x - a.x, dz = b.z - a.z;
         const d = Math.hypot(dx, dz) || 0.001;
-        if (d >= min || Math.abs(clearance(a) - clearance(b)) > 1.8 || a.rescue > 0 || b.rescue > 0) continue;
+        if (d >= min || Math.abs(clearance(a) - clearance(b)) > 1.8 || a.rescue > 0 || b.rescue > 0 || a.plane > 0 || b.plane > 0) continue;
         const nx = dx / d, nz = dz / d;
         const push = (min - d) / 2;
         a.x -= nx * push; a.z -= nz * push;
@@ -208,7 +208,7 @@ export class Game {
     for (const bar of this.barricades) {
       for (const t of this.trucks) {
         const ds = wrapDiff(t.s - bar.s, length);
-        if (Math.abs(ds) > 4.2 || Math.abs(t.lat - bar.lat) > bar.halfWidth + 1.4 || clearance(t) > 1.4) continue;
+        if (Math.abs(ds) > 4.2 || Math.abs(t.lat - bar.lat) > bar.halfWidth + 1.4 || clearance(t) > 1.4 || t.plane > 0) continue;
         if (t.shield > 0) {
           t.shield = 0;
           bar.life = 0;
@@ -247,7 +247,7 @@ export class Game {
       }
       const dx = target.x - p.x, dz = target.z - p.z;
       const d = Math.hypot(dx, dz) || 0.001;
-      if (d < 3 && (clearance(target) > ROCKET_HIT_HEIGHT || target.rescue > 0)) { p.missed = true; return true; }
+      if (target.plane > 0 || (d < 3 && (clearance(target) > ROCKET_HIT_HEIGHT || target.rescue > 0))) { p.missed = true; return true; }
       if (d < 3 || p.age > 4) {
         if (d < 3) this.hitByRocket(target);
         return false;
@@ -274,13 +274,14 @@ export class Game {
   }
 
   // Delte ut et tilfeldig power-up. Den som ligger bak får bedre (og mer skadelige) ting enn lederen.
-  giveItem(t) {
+  // forced: gi et bestemt power-up i stedet for å trekke (brukes av tester).
+  giveItem(t, forced = null) {
     const order = this.order();
     const place = order.indexOf(t) + 1;
     const leader = order[0];
     const ahead = order[Math.max(0, place - 2)]; // trucken rett foran (rakettmålet)
     const rank = this.trucks.length > 1 ? (place - 1) / (this.trucks.length - 1) : 0;
-    const item = pickItem(rank, this.rand());
+    const item = forced ?? pickItem(rank, this.rand(), this.trucks.length);
     if (item === 'turbo') {
       t.turbo = TURBO_TIME;
       t.say('TURBO!');
@@ -293,6 +294,14 @@ export class Game {
     } else if (item === 'mine') {
       dropMine(this, t);
       t.say('Mine lagt ut!');
+    } else if (item === 'wheelloss') {
+      this.wheelLoss(order);
+      t.say('Hjulstyv! Alle foran mister hjulene');
+    } else if (item === 'plane') {
+      t.plane = PLANE_TIME;
+      t.noWheels = t.stun = t.spin = t.slick = 0;
+      t.drift = t.driftGap = t.driftDir = 0;
+      t.say('FLY!', 2);
     } else if (item === 'rocket') {
       this.projectiles.push({ x: t.x, z: t.z, owner: t.id, target: ahead.id, age: 0, dir: t.theta });
       t.say('Rakett!');
@@ -302,12 +311,31 @@ export class Game {
         const w = ((s % this.track.length) + this.track.length) % this.track.length;
         if (w > j.s0 - 6 && w < j.s1 + 12) s = j.s1 + 14;
       }
+      s = clearOfZones(this.track, s, 6);
       const p = posAt(this.track, s, 0);
-      this.barricades.push({ s: wrapS(this.track, s), x: p.x, z: p.z, theta: p.theta, lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life: BARRICADE_LIFE, hit: false });
+      this.barricades.push({ s: wrapS(this.track, s), x: p.x, z: p.z, theta: p.theta, lat: 0, halfWidth: barricadeHalfWidth(this.track, s), life: BARRICADE_LIFE, hit: false });
       t.say('Veisperre lagt ut!');
       leader.say('Veisperre foran!', 2.4);
     }
     this.emit({ type: 'item', truck: t.id, item });
+  }
+
+  // Hjulstyv: alle foran den bakerste mister hjulene en stund (lederen lengst). Skjold beskytter, fly påvirkes ikke.
+  wheelLoss(order) {
+    const n = order.length;
+    order.forEach((v, i) => {
+      if (i === n - 1 || v.finished || v.plane > 0) return;
+      const shielded = v.shield > 0;
+      if (shielded) {
+        v.shield = 0;
+        v.say('Skjoldet reddet hjulene!');
+      } else {
+        v.noWheels = wheelLossTime(i + 1, n);
+        v.drift = v.driftGap = v.driftDir = 0;
+        v.say('Hjulene røk av!', v.noWheels);
+      }
+      this.emit({ type: 'hit', truck: v.id, cause: 'wheelloss', shielded });
+    });
   }
 
   afterStep(t) {
@@ -412,7 +440,7 @@ Game.prototype.applySnapshot = function applySnapshot(sn) {
   this.coins.forEach((c, i) => { c.taken = sn.co[i] === '1'; });
   this.boxes.forEach((b, i) => { b.cooldown = sn.bx[i] ?? 0; });
   this.projectiles = sn.pr.map(([x, z, dir, target, missed]) => ({ x, z, dir, target, missed: !!missed }));
-  this.barricades = sn.ba.map(([s, x, z, theta, life]) => ({ s, x, z, theta, lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life }));
+  this.barricades = sn.ba.map(([s, x, z, theta, life]) => ({ s, x, z, theta, lat: 0, halfWidth: barricadeHalfWidth(this.track, s), life }));
   this.oils = sn.oi.map(([x, z, life]) => ({ x, z, life }));
   this.mines = sn.mi.map(([x, z]) => ({ x, z }));
 };

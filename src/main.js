@@ -1,4 +1,4 @@
-import { Game, DT, LAPS, MAX_PLAYERS, BARRICADE_HALF_WIDTH } from './game.js';
+import { Game, DT, LAPS, MAX_PLAYERS, barricadeHalfWidth } from './game.js';
 import { Input, PAD_SLOTS } from './input.js';
 import { JoyconBridge } from './joycon.js';
 import { rumbleFor } from './rumble.js';
@@ -6,6 +6,7 @@ import { Renderer, layoutViews } from './render.js';
 import { Sound } from './sound.js';
 import { driftTier } from './truck.js';
 import { groundHeight } from './terrain.js';
+import { deckAt } from './track.js';
 import { Net, lerpSnapshot } from './net.js';
 import { loadRecords, submitTime } from './records.js';
 import { RaceCenter } from './racecenter.js';
@@ -74,21 +75,22 @@ function fmtTime(t) {
 const aiParam = (key, max, fallback) => { const v = Number(params.get(key)); return params.has(key) && Number.isInteger(v) ? clamp(v, 0, max) : fallback; };
 const host = {
   localCount: 2, peers: new Map(), slots: [], info: null, evBuf: [], step: 0,
-  ai: aiParam('ai', MAX_PLAYERS - 1, 1), lvl: aiParam('lvl', LEVELS.length - 1, 1), ais: [],
+  extraPads: true, ai: aiParam('ai', MAX_PLAYERS - 1, 1), lvl: aiParam('lvl', LEVELS.length - 1, 1), ais: [],
 };
 
 function lobbySlots() {
   const slots = [];
   // Spiller 1–2 følger P-valget (tastatur eller kontroller). Spiller 3–4 er kun kontrollere: én kontroller per spiller.
   for (let k = 0; k < host.localCount; k++) slots.push({ kind: 'local', k });
-  for (let k = 2; k < PAD_SLOTS; k++) if (input.pads[k]) slots.push({ kind: 'local', k });
-  for (const p of host.peers.values()) {
-    if (slots.length >= MAX_PLAYERS) break;
-    if (p.watch) continue;
-    slots.push({ kind: 'peer', id: p.id });
+  const peers = [...host.peers.values()].filter((p) => !p.watch).slice(0, MAX_PLAYERS - slots.length);
+  // AI-valget går foran ekstra kontrollere (spiller 3–4): tilkoblede kontrollere blir aldri frakoblet av Joy-Con-broen,
+  // og skulle ellers fylt alle plassene slik at AI-motstanderne ble borte.
+  const bots = Math.min(host.ai, MAX_PLAYERS - slots.length - peers.length);
+  for (let k = 2; k < PAD_SLOTS; k++) {
+    if (host.extraPads && input.pads[k] && slots.length + peers.length + bots < MAX_PLAYERS) slots.push({ kind: 'local', k });
   }
+  for (const p of peers) slots.push({ kind: 'peer', id: p.id });
   // AI-motstandere fyller opp ledige plasser etter lokale og online spillere.
-  const bots = Math.min(host.ai, MAX_PLAYERS - slots.length);
   for (let k = 0; k < bots; k++) slots.push({ kind: 'ai', k });
   return slots;
 }
@@ -226,6 +228,8 @@ function simStep() {
 
   if (game.state === 'menu') {
     if (input.pressed.has('KeyP')) { host.localCount = host.localCount === 2 ? 1 : 2; sendLobby(); }
+    if (input.pressed.has('KeyC')) { host.extraPads = !host.extraPads; sendLobby(); }
+    if (input.pressed.has('KeyK')) input.bridge?.forget();
     const nav = input.menuNav();
     const dn = (input.pressed.has('KeyN') ? 1 : 0) + nav.dy, dl = (input.pressed.has('KeyV') ? 1 : 0) + nav.dx;
     if (dn || dl) setAi(host.ai + dn, host.lvl + dl);
@@ -397,6 +401,7 @@ function updateHud(views = currentViews()) {
     }
     $('ctl-p2').classList.toggle('off', host.localCount < 2);
     setText($('ai-count'), `AI-motstandere: ${countAi(lobbySlots())}`);
+    setText($('pads-extra'), host.extraPads ? 'Ekstra kontrollere: med' : 'Ekstra kontrollere: av');
     setText($('ai-level'), `Vanskelighet: ${LEVEL_LABELS[host.lvl]}`);
     renderLobby();
   }
@@ -546,6 +551,18 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && !e.repeat) toast(sound.toggleMusic() ? 'Musikk på' : 'Musikk av');
 });
 window.addEventListener('pointerdown', () => sound.unlock());
+// Menyvalg med musepila: spiller 2 av/på, antall AI, vanskelighet og ekstra kontrollere.
+const menuClicks = {
+  'ctl-p2': () => { host.localCount = host.localCount === 2 ? 1 : 2; sendLobby(); },
+  'ai-count': () => setAi(host.ai + 1, host.lvl),
+  'ai-level': () => setAi(host.ai, host.lvl + 1),
+  'pads-extra': () => { host.extraPads = !host.extraPads; sendLobby(); },
+};
+for (const [id, act] of Object.entries(menuClicks)) {
+  const el = $(id);
+  el.classList.add('clickable');
+  el.addEventListener('click', () => { if (role === 'host' && game.state === 'menu') act(); });
+}
 
 const dbg = new URLSearchParams(location.search).has('debug') ? document.body.appendChild(Object.assign(document.createElement('pre'), { style: 'position:fixed;left:6px;bottom:6px;z-index:99;margin:0;padding:4px 6px;background:#000a;color:#8f8;font:11px monospace;pointer-events:none' })) : null;
 let fpsN = 0, fpsT = performance.now(), fps = 0;
@@ -608,7 +625,7 @@ window.__game = {
         x: t.x, z: t.z, theta: t.theta, speed: t.speed, score: t.score,
         lat: t.lat, s: t.s, dist: t.dist, lap: game.lap(t), place: game.place(t),
         onRoad: t.onRoad, wrongWay: t.wrongWay, offTime: t.offTime, rescue: t.rescue,
-        y: t.y, ground: groundHeight(t.x, t.z), air: t.air, drift: t.drift, turbo: t.turbo, shield: t.shield, stun: t.stun, slick: t.slick, draft: t.draft, catchup: t.catchup, msg: t.msg,
+        y: t.y, ground: groundHeight(t.x, t.z), deck: deckAt(game.track, t.s), air: t.air, drift: t.drift, turbo: t.turbo, shield: t.shield, stun: t.stun, slick: t.slick, draft: t.draft, catchup: t.catchup, msg: t.msg,
       })),
       boxes: game.boxes.length,
       barricades: game.barricades.map((b) => ({ s: b.s, life: b.life })),
@@ -634,7 +651,7 @@ window.__game = {
   },
   addBarricade(s) {
     const p = game.track.pts[Math.round(s / 2) % game.track.count];
-    game.barricades.push({ s, x: p.x, z: p.z, theta: Math.atan2(p.tz, p.tx), lat: 0, halfWidth: BARRICADE_HALF_WIDTH, life: 14, hit: false });
+    game.barricades.push({ s, x: p.x, z: p.z, theta: Math.atan2(p.tz, p.tx), lat: 0, halfWidth: barricadeHalfWidth(game.track, s), life: 14, hit: false });
   },
   addCoin(i, s, lat = 0) {
     const p = game.track.pts[Math.round(s / 2) % game.track.count];

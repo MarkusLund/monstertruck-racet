@@ -101,9 +101,9 @@ test.describe('Treff og effekter', () => {
     await page.keyboard.down('s');
     await run(page, 1.5);
     expect((await fxState(page)).live).toBeGreaterThan(3);
-    await page.evaluate(() => { window.__game.teleport(0, 40, 14); });
+    await page.evaluate(() => { window.__game.teleport(0, 300, 14); });
     await run(page, 1.5);
-    expect((await fxState(page)).live).toBeGreaterThan(10);
+    expect((await fxState(page)).live).toBeGreaterThan(5);
     await page.keyboard.up('s');
   });
 

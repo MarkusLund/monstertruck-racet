@@ -1,11 +1,11 @@
 // Tegning av veiutstyret: autovern og skigard der fences.js har satt opp gjerder, og kantstolper langs hele veien.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { HALF_WIDTH } from './track.js';
+import { WALL_MARGIN, SPACING } from './track.js';
 import { groundHeight } from './terrain.js';
-import { FENCE_LAT, FENCE_BAND, GUARDRAIL, SKIGARD } from './fences.js';
+import { FENCE_BAND, GUARDRAIL, SKIGARD } from './fences.js';
 
-const LAT = FENCE_LAT + FENCE_BAND / 2; // gjerdet står midt i kollisjonsbåndet
+const LAT = (p) => p.hw + WALL_MARGIN + FENCE_BAND / 2; // gjerdet står midt i kollisjonsbåndet (følger veibredden)
 const BEAM = [[0.8, 0], [0.71, 0.08], [0.63, 0], [0.55, 0.08], [0.46, 0]]; // W-profilen på autovernet: [høyde, utbuling mot veien]
 const END = 3; // autovernet bøyes ned i bakken over så mange punkter i hver ende
 const RAIL_TILT = 0.68; // skigardsstengene ligger skrått (radianer fra bakken)
@@ -17,6 +17,7 @@ export function buildFences(track) {
   const runs = track.fences?.runs ?? [];
   const at = (i, side, lat) => {
     const p = pts[(i + count) % count], sg = side ? 1 : -1;
+    if (typeof lat === 'function') lat = lat(p);
     const x = p.x + p.nx * sg * lat, z = p.z + p.nz * sg * lat;
     return { p, sg, x, z, y: groundHeight(x, z) };
   };
@@ -107,7 +108,8 @@ export function buildFences(track) {
   const postGeo = mergeGeometries([body, top, refl]);
   const spots = [];
   for (let i = 6; i < count - 6; i += POST_EVERY) {
-    for (const side of [0, 1]) spots.push({ ...at(i, side, HALF_WIDTH + 2.2), side });
+    if (pts[i].deck > 0.3) continue; // på broen står rekkverket
+    for (const side of [0, 1]) spots.push({ ...at(i, side, (p) => p.hw + 2.2), side });
   }
   const ki = new THREE.InstancedMesh(postGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), spots.length);
   spots.forEach((o, i) => {
@@ -117,5 +119,76 @@ export function buildFences(track) {
   });
   ki.computeBoundingSphere();
   group.add(ki);
+  group.add(buildBridge(track));
   return group;
 }
+
+// Et lukket tverrsnitt (liste av p => [sideforskyvning, høyde over dekket]) dratt langs banepunktene i0..i1.
+function sweep(track, i0, i1, loop, material) {
+  const { pts, count } = track;
+  const R = loop.length, pos = [], index = [];
+  for (let i = i0; i <= i1; i++) {
+    const p = pts[i % count];
+    for (const f of loop) {
+      const [lat, h] = f(p);
+      const x = p.x + p.nx * lat, z = p.z + p.nz * lat;
+      pos.push(x, groundHeight(x, z) + p.deck + h, z);
+    }
+  }
+  for (let k = 0; k < i1 - i0; k++) {
+    for (let r = 0; r < R; r++) {
+      const a = k * R + r, b = k * R + ((r + 1) % R);
+      index.push(a, a + R, b, b, a + R, b + R);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(index);
+  g.computeVertexNormals();
+  const mesh = new THREE.Mesh(g, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+// Broen: brodekke (betongbjelke under veien), rekkverk på begge sider og pilarer i oppkjørslene.
+// Ved kryssingen står det ingen pilarer, så veien under er helt åpen.
+function buildBridge(track) {
+  const group = new THREE.Group();
+  if (!track.bridge) return group;
+  const { pts, count, bridge } = track;
+  const i0 = Math.ceil(bridge.s0 / SPACING), i1 = Math.floor(bridge.s1 / SPACING);
+  let a = i0, b = i1;
+  while (a < b && pts[a % count].deck < 0.15) a++;
+  while (b > a && pts[b % count].deck < 0.15) b--;
+  const concrete = new THREE.MeshStandardMaterial({ color: 0xb9b6ae, roughness: 0.9, metalness: 0, side: THREE.DoubleSide });
+  const W = 1.5, T = 1.1; // dekket stikker W utenfor asfalten og er T tykt
+  group.add(sweep(track, a, b, [(p) => [-p.hw - W, 0], (p) => [p.hw + W, 0], (p) => [p.hw + W, -T], (p) => [-p.hw - W, -T]], concrete));
+  for (const sd of [-1, 1]) {
+    group.add(sweep(track, a, b, [(p) => [sd * (p.hw + 1), 0], (p) => [sd * (p.hw + 1), 1], (p) => [sd * (p.hw + W), 1], (p) => [sd * (p.hw + W), 0]], concrete));
+  }
+  // Pilarer hver 16. meter langs oppkjørslene.
+  const spots = [];
+  for (let i = a; i <= b; i += 8) {
+    const p = pts[i % count];
+    if (p.deck < 1.5 || cyc(i, bridge.index, count) < 24) continue;
+    for (const sd of [-1, 1]) {
+      const lat = sd * (p.hw - 1.2), x = p.x + p.nx * lat, z = p.z + p.nz * lat;
+      spots.push({ p, x, z, y: groundHeight(x, z), h: p.deck - T + 0.1 });
+    }
+  }
+  if (spots.length) {
+    const geo = new THREE.BoxGeometry(1.4, 1, 1.4);
+    geo.translate(0, 0.5, 0);
+    const im = new THREE.InstancedMesh(geo, concrete, spots.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    spots.forEach((o, k) => im.setMatrixAt(k, m4.compose(v.set(o.x, o.y - 0.3, o.z), q.setFromAxisAngle(up, -Math.atan2(o.p.tz, o.p.tx)), sc.set(1, o.h + 0.3, 1))));
+    im.castShadow = true;
+    im.computeBoundingSphere();
+    group.add(im);
+  }
+  return group;
+}
+
+const cyc = (a, b, n) => { const d = Math.abs(a - b); return Math.min(d, n - d); };

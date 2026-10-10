@@ -1,9 +1,10 @@
 // Gjerder langs veien. Det er ingen sammenhengende barriere lenger: man kan kjøre ut i terrenget (og blir hentet
 // tilbake til veien etter en stund). Gjerder står bare der det gir mening i landskapet:
 //  - autovern der bakken stuper ned fra veikanten (mot fjorden),
-//  - skigard der en annen del av banen ligger tett innpå (så man ikke kan skjære over), og noen strekk på flate jorder.
+//  - skigard der en annen del av banen ligger tett innpå (så man ikke kan skjære over), og noen strekk på flate jorder,
+//  - rekkverk langs hele broen (og ingenting ved selve kryssingen, der delene ligger over hverandre).
 // Alt beregnes fra banen og terrenget, så verten og klientene får de samme gjerdene.
-import { WALL_LAT, SPACING } from './track.js';
+import { WALL_LAT, WALL_MARGIN, SPACING } from './track.js';
 import { groundHeight, roadHeight } from './terrain.js';
 
 function mulberry(seed) {
@@ -16,9 +17,14 @@ function mulberry(seed) {
   };
 }
 
-export const FENCE_LAT = WALL_LAT; // trucken (midtpunktet) stoppes her innenfra
-export const FENCE_BAND = 2; // ... og her utenfra (FENCE_LAT + FENCE_BAND); selve gjerdet står midt imellom
-export const GUARDRAIL = 1, SKIGARD = 2;
+export const FENCE_BAND = 2; // trucken stoppes ved fenceLat innenfra og ved fenceLat + FENCE_BAND utenfra; selve gjerdet står midt imellom
+export const GUARDRAIL = 1, SKIGARD = 2, BRIDGE_RAIL = 3;
+
+// Sideforskyvningen der gjerdet av slag kind stopper trucken innenfra ved banepunkt index (følger veibredden).
+export function fenceLat(track, index, kind) {
+  const hw = track.pts[index].hw;
+  return kind === BRIDGE_RAIL ? hw - 0.4 : hw + WALL_MARGIN; // rekkverket står på brodekket, de andre på gresskanten
+}
 
 const DROP = 24; // så mye lavere enn veien bakken må ligge 18 m utenfor gjerdelinjen for at det settes opp autovern (meter)
 const NEIGHBOUR = 2 * WALL_LAT + 30; // nærmere enn dette til en annen del av banen (på samme side) gir skigard
@@ -30,6 +36,7 @@ export function placeFences(track, seed) {
   const rand = mulberry((seed ^ 0x2f6b1d37) >>> 0);
   const kinds = [new Uint8Array(count), new Uint8Array(count)];
   const runs = [];
+  const inZone = (s) => track.zones.some((z) => s > z.s0 && s < z.s1); // kryssingen: delene ligger over hverandre, ikke ved siden av
   const far = Math.ceil(80 / SPACING); // punkter nærmere enn dette langs banen regnes som samme strekning
 
   for (let side = 0; side < 2; side++) {
@@ -39,13 +46,13 @@ export function placeFences(track, seed) {
       const p = pts[i];
       const road = roadHeight(p.s);
       const at = (lat) => groundHeight(p.x + p.nx * sg * lat, p.z + p.nz * sg * lat) - road;
-      const near = at(WALL_LAT + 8), out = at(WALL_LAT + 18);
+      const near = at(p.hw + WALL_MARGIN + 8), out = at(p.hw + WALL_MARGIN + 18);
       drop[i] = out < -DROP ? 1 : 0;
       flat[i] = near > -3 && near < 6 && out > -6 && out < 14 ? 1 : 0; // flatt jorde eller slak beitebakke
-      if (i % 2) continue;
+      if (i % 2 || inZone(p.s)) continue;
       for (let j = 0; j < count; j += 2) {
         const dj = Math.abs(i - j);
-        if (Math.min(dj, count - dj) < far) continue;
+        if (Math.min(dj, count - dj) < far || inZone(pts[j].s)) continue;
         const dx = pts[j].x - p.x, dz = pts[j].z - p.z;
         if ((dx * p.nx + dz * p.nz) * sg > 0 && dx * dx + dz * dz < NEIGHBOUR * NEIGHBOUR) { close[i] = close[(i + 1) % count] = 1; break; }
       }
@@ -60,6 +67,7 @@ export function placeFences(track, seed) {
     };
     mark(close, SKIGARD);
     mark(drop, GUARDRAIL);
+    for (let i = 0; i < count; i++) if (pts[i].deck > 0.3) kinds[side][i] = BRIDGE_RAIL;
     // Noen strekk med skigard langs jorder og beitebakker, bare til pynt (men de stopper trucken som alle andre gjerder).
     const want = 2 + Math.floor(rand() * 2);
     for (let tries = 0, made = 0; tries < 120 && made < want; tries++) {

@@ -137,6 +137,9 @@ body.client .rocket-warn { font-size: 24px; top: 18%; }
 .vp.low .fx { bottom: 80px; }
 .aiopts { margin: 12px 0 0; font-size: 13px; }
 .aiopts b { color: #ffd400; }
+/* Menyvalg som kan klikkes med musepila */
+.clickable { cursor: pointer; }
+.clickable:hover { filter: brightness(1.25); }
 .roomlink { margin: 12px 0 0; font-size: 13px; }
 .roomlink b { color: #ffd400; user-select: all; }
 .players { list-style: none; margin: 10px 0 0; padding: 0; font-size: 15px; font-weight: 700; }

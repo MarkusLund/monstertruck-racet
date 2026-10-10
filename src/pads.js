@@ -1,4 +1,4 @@
-import { posAt } from './track.js';
+import { posAt, clearOfZones } from './track.js';
 import { groundHeight, clearance } from './terrain.js';
 
 // Boost-pads på bakken. Plasseringen avhenger bare av banen (som lages fra frøet),
@@ -21,6 +21,7 @@ export function placePads(track) {
   for (const [f, lat] of spots) {
     let s = f * track.length;
     for (const j of track.jumps) if (s > j.s0 - 16 && s < j.s1 + 16) s = j.s1 + 20;
+    s = clearOfZones(track, s, 12);
     const p = posAt(track, s, lat);
     pads.push({ s, lat, x: p.x, y: groundHeight(p.x, p.z), z: p.z, theta: p.theta });
   }

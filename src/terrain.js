@@ -123,6 +123,18 @@ function roadProfile(track, r) {
     const u = (i * SPACING) / length;
     for (const h of harm) raw[i] += h.a * Math.sin(Math.PI * 2 * h.k * u + h.ph);
   }
+  // Kryssing (bro over undergang): begge veiene ligger på samme nivå ved kryssingen, så bakken under broen er entydig.
+  if (track.bridge) {
+    const { index: a, under: b } = track.bridge;
+    const v = (raw[a] + raw[b]) / 2;
+    for (const c of [a, b]) {
+      for (let i = 0; i < count; i++) {
+        const d = Math.min(Math.abs(i - c), count - Math.abs(i - c)) * SPACING;
+        const w = 1 - smooth(45, 120, d);
+        raw[i] = raw[i] + (v - raw[i]) * w;
+      }
+    }
+  }
   // Flat oppstilling: rundt start/mål holdes veien på samme høyde som startstreken.
   for (let i = 0; i < count; i++) {
     const d = Math.min(i, count - i) * SPACING;
@@ -140,7 +152,11 @@ function buildGrid(track, profile) {
   const x0 = Math.min(...xs) - MARGIN, z0 = Math.min(...zs) - MARGIN;
   const nx = Math.ceil((Math.max(...xs) + MARGIN - x0) / CELL) + 1;
   const nz = Math.ceil((Math.max(...zs) + MARGIN - z0) / CELL) + 1;
-  const flat = [track.pts[0]];
+  const flat = [];
+  for (let o = -30; o <= 20; o += 3) flat.push(track.pts[(o + track.count) % track.count]); // brede startområdet
+  if (track.bridge) {
+    for (const c of [track.bridge.index, track.bridge.under]) for (let o = -30; o <= 30; o += 3) flat.push(track.pts[(c + o + track.count) % track.count]);
+  }
   for (const j of track.jumps) {
     for (let s = j.s0 - 4; s <= j.s1 + RAMP_LEN * 0.4; s += SPACING) flat.push(track.pts[Math.round(s / SPACING + track.count) % track.count]);
   }
